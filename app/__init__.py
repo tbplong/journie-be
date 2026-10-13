@@ -1,0 +1,1 @@
+"""Journie backend application."""
