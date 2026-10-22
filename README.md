@@ -17,6 +17,37 @@ The development server runs at http://127.0.0.1:8000 with automatic reload.
 - Alternative API documentation: http://127.0.0.1:8000/redoc
 - Root endpoint: `GET /` returns `{"Hello": "World"}`
 - Health check: `GET /health` returns `{"status": "ok"}`
+- Chat (travel-constraint extraction): `POST /chat` (see below; needs `GEMINI_API_KEY`)
+
+## Travel-constraint extraction
+
+`POST /chat` turns a free-text travel request into structured constraints. It is
+the production form of the journie-data LLM pipeline (`src/journie-llm`), using the
+best-measured combination, run6 + repair-v3 (83.6% exact cases on dataset v3):
+
+1. System prompt `semantic-v3`, copied verbatim; only the reference date is filled in per
+   request (default: today in Asia/Ho_Chi_Minh).
+2. Gemini (`gemini-3.5-flash-lite`, Google AI Studio) with native `responseJsonSchema`,
+   temperature 0.
+3. Strict Pydantic validation of the `Extraction` contract.
+4. Deterministic `repair-v3` processing (alias canonicalization, list/atom sync, scalar
+   from constraint, observed conflicts, `missing_fields`) and `consistency-v2` diagnostics.
+
+```powershell
+curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" `
+  -d '{"text": "Đi Đà Lạt 3 ngày từ 2026-11-20, tối đa 3tr, thích cà phê"}'
+```
+
+The response has `extraction` (the contract), `repairs` (steps applied), `issues`
+(unresolved diagnostics), and `meta` (model, prompt/processing versions, reference date,
+latency, token usage). Instruction attacks inside `text` return an empty extraction by design.
+
+Errors use `application/problem+json`: `502 invalid-llm-output` / `llm-upstream-error`,
+`503 llm-not-configured` / `llm-rate-limited` (with `Retry-After`), `504 llm-timeout`.
+There are no automatic retries, matching the benchmark.
+
+When changing the prompt, `Extraction` schema, or processing in `app/services/extraction/`,
+re-benchmark in journie-data first and bump the version constant.
 
 To run without development reload:
 
@@ -57,7 +88,15 @@ Add database sessions and ORM models when choosing a database integration.
 
 ## Configuration
 
-No environment variables are currently required. When adding settings, place
-configuration code in `app/core/` and document the variables in `.env.example`.
-A local `.env` file is ignored by Git. Environment-file loading must be configured
-when settings are introduced.
+Settings live in `app/core/config.py` and are read from the environment or a local `.env`
+(see `.env.example`); a local `.env` file is ignored by Git. Document new variables in
+`.env.example`.
+
+## Tests
+
+```powershell
+uv run pytest
+uv run ruff check app tests
+```
+
+Tests mock the Gemini API; no key or network access is needed.

@@ -1,0 +1,90 @@
+kind,canonical,alias
+destination,Ho Chi Minh City,Sài Gòn
+destination,Ho Chi Minh City,Sai Gon
+destination,Ho Chi Minh City,Saigon
+destination,Ho Chi Minh City,HCMC
+destination,Ho Chi Minh City,HCM City
+destination,Ho Chi Minh City,TP.HCM
+destination,Ho Chi Minh City,TP HCM
+destination,Ho Chi Minh City,TPHCM
+destination,Ho Chi Minh City,Ho Chi Minh
+destination,Ho Chi Minh City,Hồ Chí Minh City
+destination,Ho Chi Minh City,Thành phố Hồ Chí Minh
+destination,Ho Chi Minh City,Thanh pho Ho Chi Minh
+destination,Ho Chi Minh City,TP Hồ Chí Minh
+destination,Ho Chi Minh City,TP. Hồ Chí Minh
+destination,Hanoi,Hà Nội
+destination,Hanoi,Ha Noi
+destination,Hanoi,Hanoi City
+destination,Hanoi,Thành phố Hà Nội
+destination,Hanoi,Thanh pho Ha Noi
+destination,Hanoi,TP Hà Nội
+destination,Hanoi,TP. Hà Nội
+destination,Da Nang,Đà Nẵng
+destination,Da Nang,Danang
+destination,Da Nang,Da Nang City
+destination,Da Nang,Thành phố Đà Nẵng
+destination,Da Nang,Thanh pho Da Nang
+destination,Da Nang,TP Đà Nẵng
+destination,Da Nang,TP. Đà Nẵng
+destination,Da Lat,Đà Lạt
+destination,Da Lat,Dalat
+destination,Da Lat,Da Lat City
+destination,Da Lat,Thành phố Đà Lạt
+destination,Da Lat,Thanh pho Da Lat
+destination,Da Lat,TP Đà Lạt
+destination,Da Lat,TP. Đà Lạt
+destination,Hue,Huế
+destination,Hue,Hue City
+destination,Hue,Thành phố Huế
+destination,Hue,Thanh pho Hue
+destination,Hue,TP Huế
+destination,Hue,TP. Huế
+destination,Cần Thơ,Can Tho
+destination,Cần Thơ,Cantho
+destination,Cần Thơ,Can Tho City
+destination,Cần Thơ,Cần Thơ City
+destination,Cần Thơ,Thành phố Cần Thơ
+destination,Cần Thơ,Thanh pho Can Tho
+destination,Cần Thơ,TP Cần Thơ
+destination,Cần Thơ,TP. Cần Thơ
+destination,Cần Thơ,Can Thơ
+destination,Cần Thơ,Cần Tho
+destination,Nha Trang,Nhatrang
+destination,Nha Trang,Nha Trang City
+destination,Nha Trang,Thành phố Nha Trang
+destination,Nha Trang,Thanh pho Nha Trang
+destination,Nha Trang,TP Nha Trang
+destination,Nha Trang,TP. Nha Trang
+destination,Hội An,Hoi An
+destination,Hội An,Hoian
+destination,Hội An,Hội An City
+destination,Hội An,Hoi An City
+destination,Hội An,Thành phố Hội An
+destination,Hội An,Thanh pho Hoi An
+destination,Hội An,TP Hội An
+destination,Hội An,TP. Hội An
+interest,museum,bảo tàng
+interest,museum,bao tang
+interest,museum,bảo tang
+interest,museum,museums
+interest,cafe,cà phê
+interest,cafe,ca phe
+interest,cafe,café
+interest,cafe,cafes
+interest,cafe,cà fê
+interest,food,ẩm thực
+interest,food,am thuc
+interest,park,công viên
+interest,park,cong vien
+interest,park,parks
+interest,shopping,mua sắm
+interest,shopping,mua sam
+interest,beach,biển
+interest,beach,bien
+interest,beach,beaches
+interest,culture,văn hóa
+interest,culture,van hoa
+interest,culture,văn hoá
+interest,nature,thiên nhiên
+interest,nature,thien nhien
