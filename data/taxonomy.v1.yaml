@@ -1,0 +1,8 @@
+version: journie-taxonomy/v1
+categories:
+  attraction: [landmark, museum, gallery, historic_site, viewpoint, zoo, theme_park]
+  nature: [park, garden]
+  food: [restaurant, cafe, food_court, street_food]
+  shopping: [market, mall, department_store]
+  culture_religion: [temple, church, pagoda, mosque, shrine]
+  entertainment: [cinema, performing_arts, nightlife]

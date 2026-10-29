@@ -18,6 +18,7 @@ The development server runs at http://127.0.0.1:8000 with automatic reload.
 - Root endpoint: `GET /` returns `{"Hello": "World"}`
 - Health check: `GET /health` returns `{"status": "ok"}`
 - Chat (travel-constraint extraction): `POST /chat` (see below; needs `GEMINI_API_KEY`)
+- POI retrieval: `POST /retrieval` (see below; needs `DATABASE_URL`)
 
 ## Travel-constraint extraction
 
@@ -49,11 +50,65 @@ There are no automatic retries, matching the benchmark.
 When changing the prompt, `Extraction` schema, or processing in `app/services/extraction/`,
 re-benchmark in journie-data first and bump the version constant.
 
+## POI retrieval
+
+`POST /retrieval` takes the `extraction` from `/chat` and returns Ho Chi Minh City places:
+`pinned` (resolved `must_visit`), `disambiguation` (names with several close matches),
+`not_found`, ranked `sections` (one per interest, in the traveller's order), and `warnings`.
+There is no LLM: names are matched with `pg_trgm`; interests by taxonomy category; structured
+columns (`config/keyword_map.v1.yaml`: Michelin, vegetarian, bar, cuisines) or full-text search
+serve the other interests. Every `reason` is built from stored columns, and `score_parts` shows the
+`match` / `quality` / `time_fit` / `proximity` split. Opening hours exclude a place only when
+they are trusted (medium/high confidence, not contradicted); doubtful ones are flagged
+`hours_maybe_closed`. Page one section with `section` + `offset` + `limit`. Pass
+`selected_ids` to rank places near the ones already picked higher.
+
+Sections come from the data's `category` (`top.sub`, taxonomy `data/taxonomy.v1.yaml`), not
+from `kind`, which is display only. `config/interest_map.v2.yaml` maps each standard interest to
+taxonomy nodes: a whole top level (`food`, so a new `food.*` sub joins with no code change) or one
+sub (`food.cafe`). When two requested interests cover a place, the deeper node wins (Cà phê over
+Ẩm thực). A non-standard interest such as "phở" finds its *home*, the node holding at least 60% of
+its hits weighted by evidence (name or structured hit 1, description-only 0.3). Description-only
+hits outside the home are dropped, so a market that mentions phở is not a phở place. The keyword
+merges into a requested section covering its home, with its hits listed first; otherwise it gets
+its own section.
+
+Text matching follows one accent rule per word (`app/services/retrieval/text.py`): a word typed
+with diacritics matches the same word as written, or a word written without any ("phở" matches
+"phở" and "pho", never "phố"). A word typed without diacritics matches every accented form. Each
+stored word is indexed both as written and folded, at the same position, so the rule runs in
+Postgres full-text search with no word lists.
+
+Code lives in `app/services/retrieval/`. The pure steps (`hours`, `names.classify`, `interests`,
+`scoring`, `sections`, `ingest`) are tested without a database.
+
+Data setup (needs `DATABASE_URL`; on Azure, add `pg_trgm` to the `azure.extensions`
+allow-list first):
+
+```powershell
+uv run --group data python scripts/coverage_report.py data/places_100.parquet   # check data issues
+uv run --group data python scripts/import_parquet.py data/places_100.parquet --schema retrieval_test
+uv run pytest -m integration                         # SQL paths against retrieval_test
+uv run python eval/run_eval.py --schema retrieval_test   # name accuracy, P@5, nDCG@5, violations
+```
+
+The importer upserts by `id` (`--prune` drops ids missing from the file), applies
+`config/poi_overrides.csv` (hand-maintained `category` fixes such as bars tagged `food.cafe`) and
+checks every `category` against the taxonomy. Problems are warnings; pass `--strict-taxonomy` to
+make them fatal. Known demo-data issue: 9 places use the pre-v1 value `culture.place_of_worship`,
+declared under `taxonomy_gaps` in the interest map so Văn hoá still lists them. Regenerate the data
+with the current journie-data pipeline, then drop the gap and the bar overrides. When changing a
+config file in a way that changes results, bump its `version` and re-run the eval.
+Deployment: `vercel.json` pins region `sin1`; keep Postgres in Southeast Asia.
+
 To run without development reload:
 
 ```powershell
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+On Windows, psycopg's async mode needs a selector event loop. `fastapi dev` already uses one
+(reload), but plain uvicorn needs `--loop asyncio:SelectorEventLoop`.
 
 ## Project structure
 
@@ -99,4 +154,5 @@ uv run pytest
 uv run ruff check app tests
 ```
 
-Tests mock the Gemini API; no key or network access is needed.
+Tests mock the Gemini API; no key or network access is needed. Tests marked `integration`
+(a real Postgres) are deselected by default.

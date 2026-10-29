@@ -1,0 +1,7 @@
+# Offline tooling and data stay out of the function bundle.
+data/
+eval/
+scripts/
+tests/
+db/
+.venv/

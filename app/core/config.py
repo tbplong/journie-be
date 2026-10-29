@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     gemini_max_output_tokens: int = Field(default=4096, ge=1)
     gemini_timeout_seconds: float = Field(default=60.0, gt=0)
 
+    # POI retrieval store (Azure Database for PostgreSQL). Unset: POST /retrieval returns 503.
+    database_url: SecretStr | None = None
+    database_schema: str = "public"
+    database_pool_max_size: int = Field(default=3, ge=1)
+    database_timeout_seconds: float = Field(default=10.0, gt=0)
+    # True behind a transaction-mode PgBouncer (Azure built-in, port 6432).
+    database_pgbouncer: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

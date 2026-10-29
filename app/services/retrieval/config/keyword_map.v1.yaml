@@ -1,0 +1,99 @@
+# Non-standard interests, `other` atoms and avoid strings that map to structured columns.
+# Aliases are compared after norm() (lowercase, no accents), so "Sao Michelin" == "sao michelin".
+# A keyword either filters columns (`filter`, any listed column may match) or routes to an
+# interest group (`group`, see interest_map). Anything not listed here falls back to
+# text search over name/cuisine/features/description.
+version: keyword_map.v1
+keywords:
+  michelin_star:
+    label: Sao Michelin
+    aliases: [sao michelin, michelin star, michelin 1 sao, 1 sao michelin, nha hang sao michelin]
+    filter: {michelin: [star]}
+  bib_gourmand:
+    label: Michelin Bib Gourmand
+    aliases: [bib gourmand, bib, michelin bib gourmand]
+    filter: {michelin: [bib_gourmand]}
+  michelin:
+    label: Michelin
+    aliases: [michelin, michelin guide, nha hang michelin, quan michelin, mi shelin]
+    filter: {michelin: [star, bib_gourmand, selected]}
+  vegetarian:
+    label: Món chay
+    aliases: [chay, an chay, mon chay, do chay, quan chay, nha hang chay, thuan chay,
+              vegetarian, vegan, plant based]
+    filter: {cuisine: [vegetarian, vegan], features: [vegetarian, vegan]}
+  nightlife:
+    label: Bar & nightlife
+    aliases: [bar, pub, quan bar, nightlife, club, night club, nightclub, lounge, rooftop bar,
+              cocktail, wine bar, beer, bia, quan nhau, di bar]
+    group: nightlife
+  seafood:
+    label: Hải sản
+    aliases: [hai san, seafood, do bien, oc, quan oc]
+    filter: {cuisine: [seafood]}
+  vietnamese:
+    label: Món Việt
+    aliases: [mon viet, am thuc viet, do viet, vietnamese, vietnamese food, mon an viet nam]
+    filter: {cuisine: [vietnamese, regional]}
+  french:
+    label: Món Pháp
+    aliases: [mon phap, do phap, am thuc phap, french, french food]
+    filter: {cuisine: [french]}
+  japanese:
+    label: Món Nhật
+    aliases: [mon nhat, do nhat, japanese, sushi, ramen]
+    filter: {cuisine: [japanese, ramen, sushi]}
+  thai:
+    label: Món Thái
+    aliases: [mon thai, do thai, thai, thai food]
+    filter: {cuisine: [thai]}
+  chinese:
+    label: Món Hoa
+    aliases: [mon hoa, do hoa, mon trung, chinese, dim sum]
+    filter: {cuisine: [chinese, cantonese, dim_sum]}
+  fine_dining:
+    label: Fine dining
+    aliases: [fine dining, nha hang sang trong, an sang trong]
+    filter: {cuisine: [fine_dining]}
+  breakfast:
+    label: Ăn sáng / brunch
+    aliases: [an sang, bua sang, breakfast, brunch]
+    filter: {cuisine: [breakfast_and_brunch]}
+  bakery:
+    label: Tiệm bánh
+    aliases: [tiem banh, banh ngot, bakery]
+    filter: {cuisine: [bakery]}
+  sandwich:
+    label: Bánh mì
+    aliases: [banh mi, sandwich]
+    filter: {cuisine: [sandwich, sandwich_shop]}
+    # "bánh mì" also appears in names; the text fallback is merged with the filter.
+    text: true
+  coffee:
+    label: Cà phê
+    aliases: [quan ca phe, coffee, coffee shop]
+    group: cafe
+
+# Labels for cuisine values shown in reasons; unlisted values are shown as-is.
+cuisine_labels:
+  vietnamese: Ẩm thực Việt
+  regional: Đặc sản vùng miền
+  vegetarian: Món chay
+  vegan: Thuần chay
+  seafood: Hải sản
+  french: Ẩm thực Pháp
+  asian: Ẩm thực châu Á
+  asian_fusion: Fusion châu Á
+  thai: Ẩm thực Thái
+  chinese: Ẩm thực Hoa
+  ramen: Ramen
+  fine_dining: Fine dining
+  breakfast_and_brunch: Ăn sáng / brunch
+  coffee_shop: Cà phê
+  bakery: Tiệm bánh
+  sandwich: Bánh mì
+  sandwich_shop: Bánh mì
+  bar: Bar
+  wine_bar: Wine bar
+  latin_american: Ẩm thực Mỹ Latin
+  diner: Quán ăn

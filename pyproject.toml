@@ -5,12 +5,17 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.143.0",
     "httpx>=0.28",
+    "psycopg[binary,pool]>=3.2",
     "pydantic-settings>=2.15",
+    "pyyaml>=6.0",
     "tzdata>=2025.2",
     "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
+data = [
+    "pyarrow>=18",
+]
 dev = [
     "pytest>=8.4",
     "ruff>=0.12",
@@ -22,3 +27,6 @@ target-version = "py313"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Integration tests hit a real Postgres (DATABASE_URL); run them with `pytest -m integration`.
+markers = ["integration: needs DATABASE_URL and an imported retrieval_test schema"]
+addopts = "-m 'not integration'"

@@ -1,0 +1,46 @@
+# Interest -> taxonomy nodes (data/taxonomy.v1.yaml). A node is a top-level category ("food":
+# every food.* sub) or one sub ("food.cafe"); a sub added under a listed top joins automatically.
+# Keys of the 8 standard interests match the canonical values produced by extraction
+# (app/services/extraction/name_aliases.csv). `nightlife` has no extraction value; keyword_map
+# routes "bar"/"pub"/... to it. A POI covered by two requested interests goes to the one with the
+# deeper matching node (food.cafe beats food), then the one with fewer nodes.
+version: interest_map.v2
+taxonomy: journie-taxonomy/v1
+groups:
+  museum:
+    label: Bảo tàng
+    nodes: [attraction.museum, attraction.gallery]
+  cafe:
+    label: Cà phê
+    nodes: [food.cafe]
+  food:
+    label: Ẩm thực
+    nodes: [food]
+  park:
+    label: Công viên
+    nodes: [nature.park]
+  nature:
+    label: Thiên nhiên
+    nodes: [nature]
+  shopping:
+    label: Mua sắm
+    nodes: [shopping]
+  culture:
+    label: Văn hoá
+    nodes: [culture_religion, culture.place_of_worship, attraction.landmark,
+            attraction.historic_site, attraction.museum]
+  beach:
+    label: Biển
+    nodes: []
+  nightlife:
+    label: Bar & nightlife
+    nodes: [entertainment.nightlife]
+# Nodes used above that are not in the taxonomy, with the reason. Known data issue, kept for
+# the demo; remove each one once the data is regenerated (the integration tests fail when a gap
+# no longer occurs in the data, and unit tests fail when a gap is used but not listed here).
+taxonomy_gaps:
+  culture.place_of_worship: >-
+    places_100.parquet tags worship places with this pre-v1 value; taxonomy v1 has
+    culture_religion.<temple|church|pagoda|mosque|shrine>
+# Sections shown when the extraction has no interest at all (a product choice, not data).
+defaults: [food, culture]
