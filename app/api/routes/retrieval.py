@@ -1,12 +1,12 @@
 from collections.abc import AsyncIterator
-from typing import Annotated, Any
+from typing import Annotated
 
 import psycopg
 from fastapi import APIRouter, Depends, Request, status
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
-from app.core.errors import PROBLEM_CONTENT_TYPE, ProblemError
+from app.core.errors import ProblemError, problem_doc
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
 from app.services.retrieval.service import retrieve
 
@@ -39,29 +39,16 @@ async def get_connection(request: Request) -> AsyncIterator[AsyncConnection]:
         raise _unavailable(exc) from exc
 
 
-def _problem(description: str) -> dict[str, Any]:
-    return {
-        "description": description,
-        "content": {
-            PROBLEM_CONTENT_TYPE: {
-                "example": {
-                    "type": "/problems/<slug>",
-                    "title": "...",
-                    "status": 0,
-                    "detail": "...",
-                    "instance": "/retrieval",
-                }
-            }
-        },
-    }
-
-
 @router.post(
     "",
     status_code=status.HTTP_200_OK,
     summary="Retrieve POI suggestions for an extraction",
     response_description="Pinned places, disambiguation, and ranked sections",
-    responses={503: _problem("`retrieval-not-configured` or `retrieval-db-unavailable`")},
+    responses={
+        503: problem_doc(
+            "`retrieval-not-configured` or `retrieval-db-unavailable`", "/retrieval"
+        )
+    },
 )
 async def retrieval(
     body: RetrievalRequest,

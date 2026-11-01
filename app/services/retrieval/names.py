@@ -75,23 +75,42 @@ LIMIT %(limit)s
 """
 
 
+def _key_params(query: str) -> dict[str, object]:
+    return {
+        "q": norm(query),
+        "qv": fold_case(query),
+        # Without diacritics the query says nothing about accents: no preference.
+        "marked": any(has_diacritics(word) for word in fold_case(query).split()),
+    }
+
+
 async def lookup(conn: AsyncConnection, query: str) -> NameMatch:
-    key = norm(query)
-    if not key:
+    params = _key_params(query)
+    if not params["q"]:
         return NameMatch(query, "not_found", ())
     async with conn.cursor() as cur:
-        await cur.execute(
-            LOOKUP_SQL,
-            {
-                "q": key,
-                "qv": fold_case(query),
-                # Without diacritics the query says nothing about accents: no preference.
-                "marked": any(has_diacritics(word) for word in fold_case(query).split()),
-                "floor": AMBIGUOUS_MIN,
-                "limit": LOOKUP_LIMIT,
-            },
-        )
+        await cur.execute(LOOKUP_SQL, {**params, "floor": AMBIGUOUS_MIN, "limit": LOOKUP_LIMIT})
         rows = await cur.fetchall()
     return classify(
         query, [NameHit(row[0], float(row[1]), bool(row[2]), bool(row[3])) for row in rows]
     )
+
+
+# No LIMIT: a chain can have far more than LOOKUP_LIMIT branches. `@>` uses pois_name_keys_idx.
+EXACT_SQL = """
+SELECT id, %(marked)s AND %(qv)s = ANY(name_keys_vi) AS exact_marked
+FROM pois
+WHERE name_keys @> ARRAY[%(q)s]::text[]
+"""
+
+
+async def exact_ids(conn: AsyncConnection, query: str) -> list[str]:
+    """Every place whose name equals the query, under the same accent rule as ``classify``."""
+    params = _key_params(query)
+    if not params["q"]:
+        return []
+    async with conn.cursor() as cur:
+        await cur.execute(EXACT_SQL, params)
+        rows = await cur.fetchall()
+    match = classify(query, [NameHit(row[0], 1.0, True, bool(row[1])) for row in rows])
+    return [hit.poi_id for hit in match.hits]

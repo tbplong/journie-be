@@ -4,6 +4,7 @@ Eligibility (recommendable, inside the region, not avoided by id or category) is
 hours, scoring and section assignment happen in Python on the returned rows.
 """
 
+import time
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -41,6 +42,9 @@ async def fetch_pois(
     conn: AsyncConnection, nodes: set[str], ids: set[str], params: dict[str, Any]
 ) -> dict[str, Poi]:
     """Eligible POIs under the given taxonomy nodes, plus the given ids (if eligible)."""
+    # shortcut: loads every eligible POI of the sections (hours and scores are computed in
+    # Python), on every request and page; fine below ~10k eligible POIs, beyond that pre-rank in
+    # SQL by tier/recommended_by_count and LIMIT per node.
     if not nodes and not ids:
         return {}
     sql = f"""
@@ -115,15 +119,25 @@ async def keyword_hits(
     return hits
 
 
-async def known_cuisines(conn: AsyncConnection) -> dict[str, str]:
-    """Normalized cuisine value -> stored value, for matching interests like 'ramen'."""
-    async with conn.cursor() as cur:
-        await cur.execute("SELECT DISTINCT unnest(cuisine) FROM pois")
-        return {norm(value): value for (value,) in await cur.fetchall()}
+DATA_INFO_SQL = """
+SELECT ARRAY(SELECT DISTINCT unnest(cuisine) FROM pois), (SELECT max(data_version) FROM pois)
+"""
+DATA_INFO_TTL_SECONDS = 300
+# shortcut: per-process cache, so each instance sees a new import after at most the TTL.
+_data_info: tuple[float, dict[str, str], str | None] | None = None
 
 
-async def data_version(conn: AsyncConnection) -> str | None:
-    async with conn.cursor() as cur:
-        await cur.execute("SELECT max(data_version) FROM pois")
-        row = await cur.fetchone()
-        return row[0] if row else None
+async def data_info(conn: AsyncConnection) -> tuple[dict[str, str], str | None]:
+    """(normalized cuisine value -> stored value, data version). Both change only on import.
+
+    The cuisines let an interest like 'ramen' filter ``cuisine`` without a keyword map entry.
+    """
+    global _data_info
+    now = time.monotonic()
+    if _data_info is None or now - _data_info[0] > DATA_INFO_TTL_SECONDS:
+        async with conn.cursor() as cur:
+            await cur.execute(DATA_INFO_SQL)
+            row = await cur.fetchone()
+        cuisines, version = row if row else ([], None)
+        _data_info = (now, {norm(value): value for value in cuisines or []}, version)
+    return _data_info[1], _data_info[2]

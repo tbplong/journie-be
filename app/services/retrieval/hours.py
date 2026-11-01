@@ -81,10 +81,13 @@ def trip_weekdays(
     """Distinct weekdays the trip covers, in trip order; None when no date is known."""
     start = date.fromisoformat(start_date) if start_date else None
     end = date.fromisoformat(end_date) if end_date else None
-    if start and not end and duration_days:
-        end = start + timedelta(days=duration_days - 1)
-    if end and not start and duration_days:
-        start = end - timedelta(days=duration_days - 1)
+    try:
+        if start and not end and duration_days:
+            end = start + timedelta(days=duration_days - 1)
+        if end and not start and duration_days:
+            start = end - timedelta(days=duration_days - 1)
+    except OverflowError:  # a trip ending past year 9999 is not a real trip: no dates
+        return None
     start, end = start or end, end or start
     if start is None or end is None or end < start:
         return None

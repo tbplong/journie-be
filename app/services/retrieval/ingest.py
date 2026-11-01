@@ -9,6 +9,7 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
+from app.services.retrieval.hours import WeeklyHours, weekly_intervals
 from app.services.retrieval.scoring import MICHELIN_LABELS
 from app.services.retrieval.taxonomy import Taxonomy
 from app.services.retrieval.text import fold_case, lexeme_vector, norm
@@ -32,6 +33,18 @@ def taxonomy_issues(
         if category not in taxonomy.categories:
             issues[f"category {category!r} is not in {taxonomy.version}"] += 1
     return issues
+
+
+def readable_hours(hours: Any) -> WeeklyHours | None:
+    """The hours if query time can parse them, else None (the place counts as hours unknown).
+
+    One unreadable value ("9h00", "25:00") would otherwise fail every request that sees it.
+    """
+    try:
+        weekly_intervals(hours)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return hours
 
 
 def prepare_row(
@@ -87,7 +100,7 @@ def prepare_row(
         "city": row.get("city"),
         "outside_region": bool(row.get("outside_region")),
         "opening_hours_raw": row.get("opening_hours_raw"),
-        "opening_hours": row.get("opening_hours_normalized"),
+        "opening_hours": readable_hours(row.get("opening_hours_normalized")),
         "hours_confidence": row.get("opening_hours_confidence"),
         "hours_contradicted": row.get("hours_contradicted"),
         "price_raw": row.get("price_raw"),
@@ -99,8 +112,6 @@ def prepare_row(
         "website": row.get("website"),
         "phone": row.get("phone"),
         "name_keys": name_keys,
-        "name_doc": " ".join(name_keys),
-        "search_doc": " ".join(part for part in map(norm, search_parts) if part),
         "name_keys_vi": name_keys_vi,
         "name_text": " ".join(name_keys_vi),
         "name_lex": lexeme_vector(written_names),

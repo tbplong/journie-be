@@ -401,7 +401,7 @@ def _spec_raw(spec: SectionSpec) -> str:
     return spec.request.raw if spec.request else spec.label
 
 
-def to_card(item: Scored, extra_flags: list[str] | None = None) -> PoiCard:
+def to_card(item: Scored) -> PoiCard:
     poi = item.poi
     return PoiCard(
         id=poi.id,
@@ -415,7 +415,7 @@ def to_card(item: Scored, extra_flags: list[str] | None = None) -> PoiCard:
         score=item.score,
         score_parts=item.parts,
         reasons=reasons(poi, item.hits, item.check),
-        flags=card_flags(poi, [*item.flags, *(extra_flags or [])]),
+        flags=card_flags(poi, item.flags),
         price_raw=poi.price_raw,
         opening_hours_raw=poi.opening_hours_raw,
         website=poi.website,

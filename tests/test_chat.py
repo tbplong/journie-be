@@ -160,6 +160,20 @@ def test_invalid_model_output_is_502(
     assert response.json()["type"] == "/problems/invalid-llm-output"
 
 
+def test_blocked_prompt_without_candidates_is_invalid_output(
+    client: TestClient, use_gemini: Callable[[Handler], list[httpx.Request]]
+) -> None:
+    # A safety block comes back as promptFeedback only, with no candidates at all.
+    blocked = {"promptFeedback": {"blockReason": "SAFETY"}, "usageMetadata": {}}
+    use_gemini(lambda _: httpx.Response(200, json=blocked))
+
+    response = client.post("/chat", json={"text": "Hue 2 ngày"})
+
+    assert response.status_code == 502
+    assert response.json()["type"] == "/problems/invalid-llm-output"
+    assert "finish_reason=SAFETY" in response.json()["detail"]
+
+
 def test_rate_limit_is_503_with_retry_after(
     client: TestClient, use_gemini: Callable[[Handler], list[httpx.Request]]
 ) -> None:

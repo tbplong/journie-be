@@ -29,6 +29,8 @@ def create_pool(settings: Settings) -> AsyncConnectionPool | None:
         kwargs={
             "autocommit": True,
             "prepare_threshold": None if settings.database_pgbouncer else 5,
-            "options": f"-c search_path={settings.database_schema},public",
+            # The timeout also stops queries a killed serverless function would leave running.
+            "options": f"-c search_path={settings.database_schema},public"
+            f" -c statement_timeout={round(settings.database_timeout_seconds * 1000)}",
         },
     )

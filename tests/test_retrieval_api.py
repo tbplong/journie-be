@@ -45,3 +45,19 @@ def test_request_validation(client: TestClient) -> None:
     app.dependency_overrides[get_connection] = no_connection
     response = client.post("/retrieval", json={"extraction": BASE, "limit": 99})
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("must_visit", [f"place {i}" for i in range(21)]),
+        ("interests", [f"interest {i}" for i in range(21)]),
+        ("soft_constraints", [{"field": "other", "operator": "prefer", "value": "x"}] * 51),
+    ],
+)
+def test_oversized_lists_are_rejected(client: TestClient, field: str, value: list) -> None:
+    # Each entry would cost a query; the cap keeps one request from flooding the database.
+    app.dependency_overrides[get_connection] = no_connection
+    response = client.post("/retrieval", json={"extraction": {**BASE, field: value}})
+    assert response.status_code == 422
+    assert f"extraction.{field} has more than" in response.text

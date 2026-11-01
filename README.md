@@ -99,7 +99,10 @@ make them fatal. Known demo-data issue: 9 places use the pre-v1 value `culture.p
 declared under `taxonomy_gaps` in the interest map so Văn hoá still lists them. Regenerate the data
 with the current journie-data pipeline, then drop the gap and the bar overrides. When changing a
 config file in a way that changes results, bump its `version` and re-run the eval.
-Deployment: `vercel.json` pins region `sin1`; keep Postgres in Southeast Asia.
+Deployment: `vercel.json` pins region `sin1`; keep Postgres in Southeast Asia. `POST /chat` has no
+login and every call is a paid Gemini request: add a Vercel Firewall rate-limit rule on `/chat`
+(dashboard, Firewall → custom rule, e.g. 20 requests/minute per IP) so one client cannot use up
+the quota.
 
 To run without development reload:
 

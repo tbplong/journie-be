@@ -2,11 +2,16 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.extraction import Extraction
 
 NameField = Literal["must_visit", "preferred_places", "avoid"]
+
+# Each name and interest costs a query (service.retrieve), and the client sends the extraction,
+# so the lists are bounded here; Extraction itself is the Gemini schema and must not change.
+MAX_LIST_ITEMS = 20
+MAX_CONSTRAINTS = 50
 
 
 class RetrievalRequest(BaseModel):
@@ -21,6 +26,21 @@ class RetrievalRequest(BaseModel):
     )
     offset: int = Field(default=0, ge=0, description="Items to skip in each returned section.")
     limit: int = Field(default=6, ge=1, le=20, description="Items per returned section.")
+
+    @model_validator(mode="after")
+    def bounded_lists(self) -> "RetrievalRequest":
+        limits = {
+            "interests": MAX_LIST_ITEMS,
+            "must_visit": MAX_LIST_ITEMS,
+            "avoid": MAX_LIST_ITEMS,
+            "preferred_places": MAX_LIST_ITEMS,
+            "hard_constraints": MAX_CONSTRAINTS,
+            "soft_constraints": MAX_CONSTRAINTS,
+        }
+        for name, limit in limits.items():
+            if len(getattr(self.extraction, name)) > limit:
+                raise ValueError(f"extraction.{name} has more than {limit} entries")
+        return self
 
 
 class PoiCard(BaseModel):

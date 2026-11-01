@@ -106,7 +106,8 @@ async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> Retrieva
     if extraction.destination is None:
         warnings.append("Chưa rõ điểm đến; đang gợi ý địa điểm tại TP.HCM")
 
-    plan = plan_interests(extraction, await candidates.known_cuisines(conn))
+    cuisines, data_version = await candidates.data_info(conn)
+    plan = plan_interests(extraction, cuisines)
     window = trip_window(
         extraction.start_date,
         extraction.end_date,
@@ -128,9 +129,9 @@ async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> Retrieva
     not_found: list[NotFound] = []
     for field, query in dict.fromkeys(queries):
         match = await names.lookup(conn, query)
-        exact_ids = [hit.poi_id for hit in match.hits if hit.exact]
-        if field == "avoid" and exact_ids:
-            avoid_ids.update(exact_ids)  # every branch sharing the exact name is avoided
+        if field == "avoid" and any(hit.exact for hit in match.hits):
+            # Every branch sharing the exact name is avoided, not just the lookup's top few.
+            avoid_ids.update(await names.exact_ids(conn, query))
         elif match.status == "resolved":
             hit = match.hits[0]
             if field == "must_visit":
@@ -190,5 +191,5 @@ async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> Retrieva
         not_found=not_found,
         sections=[_page(result, request.offset, request.limit) for result in results],
         warnings=list(dict.fromkeys([*warnings, *section_warnings])),
-        meta=_meta(started, await candidates.data_version(conn)),
+        meta=_meta(started, data_version),
     )

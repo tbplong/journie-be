@@ -33,6 +33,9 @@ def test_trip_weekdays_from_dates_duration_or_nothing() -> None:
     assert trip_weekdays("2026-10-31", None, None) == (SAT,)
     assert trip_weekdays(None, None, 3) is None
     assert len(trip_weekdays("2026-10-01", "2026-10-20", None) or ()) == 7
+    # A duration past the calendar's end must not crash the request.
+    assert trip_weekdays("2026-10-31", None, 5_000_000) is None
+    assert trip_weekdays(None, "2026-11-01", 5_000_000) is None
 
 
 def test_no_dates_or_times_means_no_filter() -> None:

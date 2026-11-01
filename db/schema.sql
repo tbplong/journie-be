@@ -1,7 +1,7 @@
 -- POI retrieval store (spec section 2, 7). Idempotent: safe to run on every import.
 -- Derived text columns are computed by scripts/import_parquet.py with app.services.retrieval.text,
 -- so Postgres `unaccent` is not needed:
---   name_keys / name_doc / search_doc   norm(): accents folded (fallback, trigram fuzzy names)
+--   name_keys                           norm(): accents folded (fallback, trigram fuzzy names)
 --   name_keys_vi / name_text            fold_case(): accents kept
 --   name_lex / search_lex               lexeme_vector(): accent-aware full-text (see text.py)
 -- On Azure Flexible Server, pg_trgm must be in the `azure.extensions` allow-list first.
@@ -37,8 +37,6 @@ CREATE TABLE IF NOT EXISTS pois (
     website               text,
     phone                 text,
     name_keys             text[] NOT NULL DEFAULT '{}',
-    name_doc              text NOT NULL DEFAULT '',
-    search_doc            text NOT NULL DEFAULT '',
     name_keys_vi          text[] NOT NULL DEFAULT '{}',
     name_text             text NOT NULL DEFAULT '',
     name_lex              tsvector NOT NULL DEFAULT '',
@@ -48,8 +46,6 @@ CREATE TABLE IF NOT EXISTS pois (
 );
 
 CREATE INDEX IF NOT EXISTS pois_name_keys_idx ON pois USING gin (name_keys);
-CREATE INDEX IF NOT EXISTS pois_name_doc_trgm_idx ON pois USING gin (name_doc gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS pois_search_doc_trgm_idx ON pois USING gin (search_doc gin_trgm_ops);
 
 -- Upgrades for tables created by an earlier schema.sql.
 ALTER TABLE pois ADD COLUMN IF NOT EXISTS name_keys_vi text[] NOT NULL DEFAULT '{}';
@@ -63,8 +59,12 @@ ALTER TABLE pois ADD COLUMN IF NOT EXISTS category_top text
     GENERATED ALWAYS AS (split_part(category, '.', 1)) STORED;
 ALTER TABLE pois DROP COLUMN IF EXISTS is_bar;
 DROP INDEX IF EXISTS pois_kind_idx;
+-- Never queried (names use name_keys / name_text, search uses search_lex); drops their indexes.
+ALTER TABLE pois DROP COLUMN IF EXISTS name_doc;
+ALTER TABLE pois DROP COLUMN IF EXISTS search_doc;
+-- name_keys_vi is only checked per row (= ANY), which cannot use this index.
+DROP INDEX IF EXISTS pois_name_keys_vi_idx;
 
-CREATE INDEX IF NOT EXISTS pois_name_keys_vi_idx ON pois USING gin (name_keys_vi);
 CREATE INDEX IF NOT EXISTS pois_name_text_trgm_idx ON pois USING gin (name_text gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS pois_name_lex_idx ON pois USING gin (name_lex);
 CREATE INDEX IF NOT EXISTS pois_search_lex_idx ON pois USING gin (search_lex);

@@ -1,9 +1,9 @@
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 
 from app.core.config import Settings, get_settings
-from app.core.errors import PROBLEM_CONTENT_TYPE, ProblemError
+from app.core.errors import ProblemError, problem_doc
 from app.schemas.extraction import ExtractionRequest, ExtractionResponse
 from app.services.extraction.service import InvalidModelOutputError, extract_constraints
 from app.services.gemini import (
@@ -31,32 +31,15 @@ def get_gemini_client(
     )
 
 
-def _problem(description: str) -> dict[str, Any]:
-    return {
-        "description": description,
-        "content": {
-            PROBLEM_CONTENT_TYPE: {
-                "example": {
-                    "type": "/problems/<slug>",
-                    "title": "...",
-                    "status": 0,
-                    "detail": "...",
-                    "instance": "/chat",
-                }
-            }
-        },
-    }
-
-
 @router.post(
     "",
     status_code=status.HTTP_200_OK,
     summary="Extract travel constraints from free text",
     response_description="Validated, deterministically repaired extraction",
     responses={
-        502: _problem("`invalid-llm-output` or `llm-upstream-error`"),
-        503: _problem("`llm-not-configured` or `llm-rate-limited` (with Retry-After)"),
-        504: _problem("`llm-timeout`"),
+        502: problem_doc("`invalid-llm-output` or `llm-upstream-error`", "/chat"),
+        503: problem_doc("`llm-not-configured` or `llm-rate-limited` (with Retry-After)", "/chat"),
+        504: problem_doc("`llm-timeout`", "/chat"),
     },
 )
 async def chat(

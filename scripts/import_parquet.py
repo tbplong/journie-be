@@ -61,6 +61,13 @@ def main() -> int:
     print(f"{len(rows)} rows from {args.parquet}")
     if unused:
         print(f"warning: overrides for ids not in this file: {sorted(unused)}")
+    dropped_hours = [
+        row["id"]
+        for raw, row in zip(raw_rows, rows)
+        if raw.get("opening_hours_normalized") and row["opening_hours"] is None
+    ]
+    if dropped_hours:
+        print(f"warning: unreadable opening hours stored as unknown: {dropped_hours}")
     issues = taxonomy_issues(
         ((raw.get("taxonomy_version"), row["category"]) for raw, row in zip(raw_rows, rows)),
         load_taxonomy(args.taxonomy),

@@ -73,6 +73,27 @@ def test_name_lookup(query: str, status: str, poi_id: str | None) -> None:
         assert match.hits[0].poi_id == poi_id
 
 
+def test_avoid_finds_every_branch_of_a_chain() -> None:
+    branches = [f"chain-{i}" for i in range(names.LOOKUP_LIMIT + 2)]
+
+    async def job(conn: AsyncConnection) -> tuple[list[str], list[str]]:
+        # A temp table shadows pois for this connection only; the imported data is untouched.
+        await conn.execute("CREATE TEMP TABLE pois (LIKE pois INCLUDING ALL)")
+        rows = [(poi_id, "Phở Hùng", ["pho hung"], ["phở hùng"]) for poi_id in branches]
+        rows.append(("namesake", "Phố Hùng", ["pho hung"], ["phố hùng"]))
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                "INSERT INTO pois (id, name, kind, name_keys, name_keys_vi)"
+                " VALUES (%s, %s, 'restaurant', %s, %s)",
+                rows,
+            )
+        return await names.exact_ids(conn, "Phở Hùng"), await names.exact_ids(conn, "pho hung")
+
+    accented, plain = run(job)
+    assert sorted(accented) == sorted(branches)  # more than LOOKUP_LIMIT, never the namesake
+    assert sorted(plain) == sorted([*branches, "namesake"])
+
+
 def test_pho_is_merged_into_food_and_listed_first() -> None:
     response = retrieval(interests=["food", "phở"])
     food = next(s for s in response.sections if s.key == "food")

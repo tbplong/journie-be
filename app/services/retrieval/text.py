@@ -38,10 +38,6 @@ def norm(text: str | None) -> str:
     return _NON_WORD.sub(" ", stripped).strip()
 
 
-def tokens(text: str | None) -> list[str]:
-    return norm(text).split()
-
-
 def fold_case(text: str | None) -> str:
     """Lowercase (NFC), punctuation and ``_`` to spaces, collapse; diacritics are kept."""
     if not text:

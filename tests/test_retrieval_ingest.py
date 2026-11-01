@@ -31,8 +31,14 @@ def test_seed_names_split_and_trim() -> None:
 def test_name_keys_are_normalized_and_deduplicated() -> None:
     prepared = prepare_row(row(), {}, "v1")
     assert prepared["name_keys"] == ["cho ben thanh", "ben thanh market", "cho sai gon"]
-    assert prepared["name_doc"] == "cho ben thanh ben thanh market cho sai gon"
-    assert "khu cho lau doi" in prepared["search_doc"]
+
+
+def test_unreadable_hours_are_stored_as_unknown() -> None:
+    good = {"mon": [["06:00", "22:00"]]}
+    assert prepare_row(row(opening_hours_normalized=good), {}, "v1")["opening_hours"] == good
+    for bad in ({"mon": [["9h00", "22:00"]]}, {"mon": [["06:00", "25:00"]]}, {"mon": "06-22"}):
+        assert prepare_row(row(opening_hours_normalized=bad), {}, "v1")["opening_hours"] is None
+    assert prepare_row(row(), {}, "v1")["opening_hours"] is None
 
 
 def test_overrides_replace_category_and_kind() -> None:
@@ -57,8 +63,8 @@ def test_taxonomy_issues_count_rows_per_problem() -> None:
 
 def test_michelin_and_cuisine_are_searchable() -> None:
     prepared = prepare_row(row(michelin="bib_gourmand", cuisine=["các_món_ăn_huế"]), {}, "v1")
-    assert "michelin bib gourmand" in prepared["search_doc"]
-    assert "cac mon an hue" in prepared["search_doc"]
+    lexemes = {part.split(":", 1)[0] for part in prepared["search_lex"].split()}
+    assert {"'michelin'", "'bib'", "'gourmand'", "'huế'", "'hue'"} <= lexemes
 
 
 def test_accent_columns_use_only_text_as_written() -> None:
