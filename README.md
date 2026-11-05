@@ -19,6 +19,8 @@ The development server runs at http://127.0.0.1:8000 with automatic reload.
 - Health check: `GET /health` returns `{"status": "ok"}`
 - Chat (travel-constraint extraction): `POST /chat` (see below; needs `GEMINI_API_KEY`)
 - POI retrieval: `POST /retrieval` (see below; needs `DATABASE_URL`)
+- Full API guide (Vietnamese: workflow, fields, errors, dependencies): [docs/API.md](docs/API.md)
+- Code walkthrough per endpoint (Vietnamese: every file, flow, mechanisms): [docs/endpoints/](docs/endpoints/README.md)
 
 ## Travel-constraint extraction
 
@@ -86,18 +88,17 @@ Data setup (needs `DATABASE_URL`; on Azure, add `pg_trgm` to the `azure.extensio
 allow-list first):
 
 ```powershell
-uv run --group data python scripts/coverage_report.py data/places_100.parquet   # check data issues
-uv run --group data python scripts/import_parquet.py data/places_100.parquet --schema retrieval_test
+uv run --group data python scripts/coverage_report.py data/places_1000.parquet   # check data issues
+uv run --group data python scripts/import_parquet.py data/places_1000.parquet --schema retrieval_test --prune
 uv run pytest -m integration                         # SQL paths against retrieval_test
 uv run python eval/run_eval.py --schema retrieval_test   # name accuracy, P@5, nDCG@5, violations
 ```
 
 The importer upserts by `id` (`--prune` drops ids missing from the file), applies
-`config/poi_overrides.csv` (hand-maintained `category` fixes such as bars tagged `food.cafe`) and
-checks every `category` against the taxonomy. Problems are warnings; pass `--strict-taxonomy` to
-make them fatal. Known demo-data issue: 9 places use the pre-v1 value `culture.place_of_worship`,
-declared under `taxonomy_gaps` in the interest map so Văn hoá still lists them. Regenerate the data
-with the current journie-data pipeline, then drop the gap and the bar overrides. When changing a
+`config/poi_overrides.csv` (hand-maintained `category`/`kind` fixes by id; empty now, fix
+mis-tagged places in journie-data instead) and checks every `category` against the taxonomy.
+Problems are fatal; `--no-strict-taxonomy` prints them as warnings, for a known data issue declared
+under `taxonomy_gaps` in the interest map. When changing a
 config file in a way that changes results, bump its `version` and re-run the eval.
 Deployment: `vercel.json` pins region `sin1`; keep Postgres in Southeast Asia. `POST /chat` has no
 login and every call is a paid Gemini request: add a Vercel Firewall rate-limit rule on `/chat`

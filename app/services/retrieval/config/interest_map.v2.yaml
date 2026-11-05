@@ -27,20 +27,16 @@ groups:
     nodes: [shopping]
   culture:
     label: Văn hoá
-    nodes: [culture_religion, culture.place_of_worship, attraction.landmark,
-            attraction.historic_site, attraction.museum]
+    nodes: [culture_religion, attraction.landmark, attraction.historic_site, attraction.museum]
   beach:
     label: Biển
     nodes: []
   nightlife:
     label: Bar & nightlife
     nodes: [entertainment.nightlife]
-# Nodes used above that are not in the taxonomy, with the reason. Known data issue, kept for
-# the demo; remove each one once the data is regenerated (the integration tests fail when a gap
-# no longer occurs in the data, and unit tests fail when a gap is used but not listed here).
-taxonomy_gaps:
-  culture.place_of_worship: >-
-    places_100.parquet tags worship places with this pre-v1 value; taxonomy v1 has
-    culture_religion.<temple|church|pagoda|mosque|shrine>
+# Nodes used above that are not in the taxonomy, with the reason (node: why). Only for a known
+# data issue; the integration tests fail when a gap no longer occurs in the data, and unit tests
+# fail when a gap is used but not listed here.
+taxonomy_gaps: {}
 # Sections shown when the extraction has no interest at all (a product choice, not data).
 defaults: [food, culture]

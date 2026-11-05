@@ -1,6 +1,6 @@
 """Column coverage and data-issue report for a POI Parquet file (spec section 3).
 
-    uv run --group data python scripts/coverage_report.py data/places_100.parquet > report.md
+    uv run --group data python scripts/coverage_report.py data/places_1000.parquet > report.md
 
 Run it on every new dataset before importing: it confirms the known issues (categories outside
 the taxonomy, low-confidence hours, sparse price/description, interest coverage, taxonomy

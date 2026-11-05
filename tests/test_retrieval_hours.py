@@ -112,3 +112,10 @@ def test_hours_reason_uses_stored_values() -> None:
     )
     assert hours_reason(every_day(("06:00", "22:00")), (SAT,)) == "Mở 06:00–22:00 thứ Bảy"
     assert hours_reason(None, (SAT,)) is None
+
+
+def test_hours_reason_skips_days_open_only_by_the_previous_night() -> None:
+    # Closed Monday, but Sunday 21:00-05:00 makes Monday morning "open" in check_hours.
+    late_bar = every_day(("21:00", "05:00")) | {"mon": []}
+    assert hours_reason(late_bar, tuple(range(7))) == "Mở 21:00–05:00 thứ Ba"
+    assert hours_reason(late_bar, (MON,)) is None

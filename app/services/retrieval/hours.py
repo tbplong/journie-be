@@ -163,5 +163,6 @@ def hours_reason(hours: WeeklyHours | None, open_weekdays: tuple[int, ...]) -> s
     texts = {day: _format_day(hours, day) for day in open_weekdays}
     if len(open_weekdays) == 7 and len(set(texts.values())) == 1:
         return f"Mở {texts[0]} hằng ngày"
-    first = open_weekdays[0]
-    return f"Mở {texts[first]} {DAY_LABELS[first]}"
+    # A day can be open only through the previous night's hours and have nothing stored itself.
+    first = next((day for day in open_weekdays if texts[day]), None)
+    return None if first is None else f"Mở {texts[first]} {DAY_LABELS[first]}"

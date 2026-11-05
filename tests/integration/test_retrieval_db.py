@@ -1,7 +1,7 @@
-"""SQL paths against a real Postgres loaded with data/places_100.parquet.
+"""SQL paths against a real Postgres loaded with data/places_1000.parquet.
 
-    uv run --group data python scripts/import_parquet.py data/places_100.parquet \
-        --schema retrieval_test
+    uv run --group data python scripts/import_parquet.py data/places_1000.parquet \
+        --schema retrieval_test --prune
     uv run pytest -m integration
 
 Skipped without DATABASE_URL or when the test schema is empty.
@@ -104,9 +104,13 @@ def test_pho_is_merged_into_food_and_listed_first() -> None:
 
 def test_cafe_has_no_bars_and_bar_gets_nightlife() -> None:
     cafe = retrieval(interests=["cafe"])
-    assert {i.id for s in cafe.sections for i in s.items} == {
-        "fashionista-cafe-bce683",
-        "highlands-coffee-ben-van-don-hcm-a754e1",
+    cafe_items = [i for s in cafe.sections for i in s.items]
+    assert cafe_items and all(i.category == "food.cafe" for i in cafe_items)
+    # bars the pipeline used to tag food.cafe (fixed in places_1000)
+    assert not {i.id for i in cafe_items} & {
+        "go2-bar-9cec48",
+        "bar-lush-4496f1",
+        "carmen-bar-792146",
     }
     bar = retrieval(interests=["bar"])
     assert [s.key for s in bar.sections] == ["nightlife"]
@@ -121,7 +125,7 @@ def test_pinned_avoid_and_status() -> None:
     listed = {i.id for s in response.sections for i in s.items}
     assert "cho-ben-thanh-68e3af" not in listed
     assert retrieval(destination="Hanoi", interests=["food"]).status == "unsupported_destination"
-    assert response.meta.data_version == "places_100"
+    assert response.meta.data_version == "places_1000"
 
 
 # Words stored "as written" (weight A) in each POI's search document.

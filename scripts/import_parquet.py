@@ -1,16 +1,16 @@
 """Import a POI Parquet file into Postgres (upsert by id; safe to re-run).
 
-    uv run --group data python scripts/import_parquet.py data/places_100.parquet \
+    uv run --group data python scripts/import_parquet.py data/places_1000.parquet \
         --schema retrieval_test [--data-version 2026-10-28] [--prune] [--dry-run] \
-        [--taxonomy data/taxonomy.v1.yaml] [--strict-taxonomy]
+        [--taxonomy data/taxonomy.v1.yaml] [--no-strict-taxonomy]
 
 Reads DATABASE_URL from the environment / .env. Creates the schema, the pg_trgm extension and
 the ``pois`` table (db/schema.sql) if missing. ``--prune`` deletes rows whose id is not in the
 file, so the table mirrors one dataset release.
 
 Every row's ``taxonomy_version`` and ``category`` (after overrides) are checked against the
-taxonomy file. Problems are printed as warnings; ``--strict-taxonomy`` makes them fatal. The
-demo dataset still has known problems (see interest_map ``taxonomy_gaps``), hence the default.
+taxonomy file. Problems are fatal; ``--no-strict-taxonomy`` prints them as warnings instead
+(for a dataset with a known issue, declared under interest_map ``taxonomy_gaps``).
 """
 
 import argparse
@@ -45,7 +45,10 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Transform only; print a summary")
     parser.add_argument("--taxonomy", type=Path, default=DEFAULT_TAXONOMY)
     parser.add_argument(
-        "--strict-taxonomy", action="store_true", help="Fail on rows that break the taxonomy"
+        "--strict-taxonomy",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fail on rows that break the taxonomy (default); --no-strict-taxonomy only warns",
     )
     args = parser.parse_args()
 
