@@ -86,6 +86,11 @@ def test_single_endpoint_uses_the_rest_of_the_day() -> None:
     assert check_hours(evening, window("20:00", None)).status == "open"
     assert check_hours(evening, window(None, "17:00")).status == "closed"
     assert check_hours(evening, window(None, "18:30")).status == "open"
+    # The schema has no 24:00, so "free until midnight" arrives as an end of 00:00.
+    daytime = every_day(("07:00", "22:00"))
+    assert check_hours(daytime, window(None, "00:00")).status == "open"
+    assert check_hours(daytime, window("18:00", "00:00")).status == "open"
+    assert check_hours(every_day(("07:00", "17:00")), window("18:00", "00:00")).status == "closed"
 
 
 def test_missing_hours_are_unknown() -> None:

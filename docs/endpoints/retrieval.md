@@ -116,10 +116,11 @@ có trần. Mọi query chạy **tuần tự trên một kết nối**, vì mộ
 - `RetrievalRequest.extraction` dùng lại đúng model `Extraction` của `/chat`, nên mọi luật strict
   (sai kiểu, thừa field → 422) áp dụng luôn.
 - `bounded_lists`: mỗi tên và mỗi sở thích tốn một query, và client tự gửi body, nên phải giới hạn
-  (20 phần tử mỗi list, 50 atom). Giới hạn đặt ở đây chứ không ở `Extraction`, vì `Extraction` là
+  (20 phần tử mỗi list, 50 atom, mỗi phần tử hoặc `value` ≤ 200 ký tự: chuỗi dài làm mỗi query
+  so tên chậm theo độ dài). Giới hạn đặt ở đây chứ không ở `Extraction`, vì `Extraction` là
   schema gửi cho Gemini và không được đổi.
 - `selected_ids` (≤ 50), `section`, `offset`, `limit` (1–20, mặc định 6) dùng cho "xem thêm" và
-  xếp hạng theo khoảng cách.
+  xếp hạng theo khoảng cách. Nơi trong `selected_ids` (như nơi ghim) không nằm trong section nào.
 - Response: `pinned`, `disambiguation`, `not_found`, `sections` (mỗi section có `items` là
   `PoiCard`), `warnings`, `meta`. Ý nghĩa từng field xem [../API.md](../API.md).
 

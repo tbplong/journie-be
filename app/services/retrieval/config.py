@@ -57,7 +57,6 @@ class InterestMap:
 @dataclass(frozen=True)
 class KeywordMap:
     version: str
-    keywords: dict[str, Keyword]
     by_alias: dict[str, Keyword]
     cuisine_labels: dict[str, str]
 
@@ -92,7 +91,6 @@ def load_interest_map(name: str = "interest_map.v2.yaml") -> InterestMap:
 
 def load_keyword_map(groups: dict[str, Group], name: str = "keyword_map.v1.yaml") -> KeywordMap:
     data = _yaml(name)
-    keywords: dict[str, Keyword] = {}
     by_alias: dict[str, Keyword] = {}
     for key, spec in data["keywords"].items():
         column_filter = {col: tuple(vals) for col, vals in (spec.get("filter") or {}).items()}
@@ -110,11 +108,10 @@ def load_keyword_map(groups: dict[str, Group], name: str = "keyword_map.v1.yaml"
             spec.get("group"),
             spec.get("text", False),
         )
-        keywords[key] = keyword
         for alias in keyword.aliases:
             if by_alias.setdefault(alias, keyword) is not keyword:
                 raise ValueError(f"Alias {alias!r} maps to two keywords")
-    return KeywordMap(data["version"], keywords, by_alias, data.get("cuisine_labels", {}))
+    return KeywordMap(data["version"], by_alias, data.get("cuisine_labels", {}))
 
 
 def load_overrides(name: str = "poi_overrides.csv") -> dict[str, dict[str, str]]:

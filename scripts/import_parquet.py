@@ -14,7 +14,6 @@ taxonomy file. Problems are fatal; ``--no-strict-taxonomy`` prints them as warni
 """
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -27,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.core.config import Settings
 from app.services.retrieval.config import load_overrides
+from app.services.retrieval.db import SCHEMA_NAME
 from app.services.retrieval.ingest import prepare_row, taxonomy_issues
 from app.services.retrieval.taxonomy import load_taxonomy
 
@@ -54,7 +54,7 @@ def main() -> int:
 
     settings = Settings()
     schema = args.schema or settings.database_schema
-    if not re.fullmatch(r"[a-z_][a-z0-9_]*", schema):
+    if not SCHEMA_NAME.fullmatch(schema):
         parser.error(f"invalid schema name {schema!r}")
     overrides = load_overrides()
     version = args.data_version or args.parquet.stem

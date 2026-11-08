@@ -161,6 +161,18 @@ def test_seed_changes_the_order_and_pages_stay_consistent() -> None:
     assert len(first) == len(second) == 6 and not set(first) & set(second)
 
 
+def test_selected_place_is_not_suggested_again() -> None:
+    def cafe_ids(selected: list[str]) -> list[str]:
+        request = RetrievalRequest.model_validate(
+            {"extraction": {**BASE, "interests": ["cafe"]}, "selected_ids": selected, "limit": 20}
+        )
+        response = run(lambda conn: retrieve(conn, request))
+        return [item.id for section in response.sections for item in section.items]
+
+    picked = cafe_ids([])[0]
+    assert picked not in cafe_ids([picked])
+
+
 # Words stored "as written" (weight A) in each POI's search document.
 WRITTEN_SQL = "SELECT u.lexeme FROM unnest(p.search_lex) AS u WHERE 'A' = ANY(u.weights)"
 

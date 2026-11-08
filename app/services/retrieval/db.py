@@ -11,14 +11,14 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import Settings
 
-_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
+SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")  # spliced into SQL, so letters only
 
 
 def create_pool(settings: Settings) -> AsyncConnectionPool | None:
     """An unopened pool, or None when DATABASE_URL is not configured."""
     if settings.database_url is None:
         return None
-    if not _IDENTIFIER.fullmatch(settings.database_schema):
+    if not SCHEMA_NAME.fullmatch(settings.database_schema):
         raise ValueError(f"Invalid DATABASE_SCHEMA {settings.database_schema!r}")
     return AsyncConnectionPool(
         settings.database_url.get_secret_value(),

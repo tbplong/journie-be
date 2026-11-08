@@ -60,6 +60,9 @@ def classify(query: str, hits: list[NameHit]) -> NameMatch:
     return NameMatch(query, "ambiguous", close)
 
 
+# shortcut: similarity() over unnested name_keys cannot use an index, so every name scans every
+# recommendable place (<= 60 names per request); fine below ~20k places, beyond that pre-filter
+# with the index-backed `%` operator on a trigram index and score only the rows it keeps.
 LOOKUP_SQL = """
 SELECT p.id,
        max(greatest(similarity(k, %(q)s), word_similarity(%(q)s, k))) AS sim,

@@ -271,3 +271,16 @@ def test_reasons_come_from_columns() -> None:
     ]
     assert "no_price" not in card.flags
     assert set(card.score_parts) == {"match", "quality", "explore"}
+
+
+def test_skipped_place_is_not_listed_and_its_neighbours_rank_first() -> None:
+    # p3 was already picked: it anchors proximity but must not be suggested again.
+    cafes = {f"p{i}": poi(f"p{i}", "food.cafe", latitude=10.77 + i * 0.009, longitude=106.7)
+             for i in range(5)}
+    plan = plan_interests(extraction(interests=["cafe"]))
+    results, _ = assemble(
+        plan, cafes, {}, ANY, pinned_ids=frozenset({"p3"}), anchors=[(10.797, 106.7)], seed=1
+    )
+    ids = [i.poi.id for i in results[0].items]
+    assert "p3" not in ids
+    assert set(ids[:2]) == {"p2", "p4"}

@@ -182,7 +182,8 @@ async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> Retrieva
         hits,
         window,
         frozenset(preferred),
-        frozenset(pinned),
+        # Already selected places only anchor proximity; suggesting them again is noise.
+        frozenset(pinned) | frozenset(request.selected_ids),
         anchors,
         request_seed(request),
     )

@@ -1,5 +1,7 @@
 from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -63,6 +65,42 @@ def test_oversized_lists_are_rejected(client: TestClient, field: str, value: lis
     response = client.post("/retrieval", json={"extraction": {**BASE, field: value}})
     assert response.status_code == 422
     assert f"extraction.{field} has more than" in response.text
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("must_visit", ["x" * 201]),
+        ("hard_constraints", [{"field": "other", "operator": "include", "value": "x" * 201}]),
+    ],
+)
+def test_overlong_entries_are_rejected(client: TestClient, field: str, value: list) -> None:
+    # Every entry is matched against every place in SQL; a huge string would hold the database.
+    app.dependency_overrides[get_connection] = no_connection
+    response = client.post("/retrieval", json={"extraction": {**BASE, field: value}})
+    assert response.status_code == 422
+    assert f"extraction.{field} has an entry longer than" in response.text
+
+
+class FakePool:
+    @asynccontextmanager
+    async def connection(self) -> AsyncIterator[object]:
+        yield object()
+
+
+def test_database_error_is_a_retryable_problem(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def timed_out(conn: object, body: object) -> None:
+        raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+
+    monkeypatch.setattr("app.api.routes.retrieval.retrieve", timed_out)
+    monkeypatch.setattr(app.state, "db_pool", FakePool())
+    response = client.post("/retrieval", json={"extraction": {**BASE, "interests": ["food"]}})
+    assert response.status_code == 503
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.headers["retry-after"] == "5"
+    assert response.json()["type"] == "/problems/retrieval-db-unavailable"
 
 
 def test_seed_defaults_to_the_extraction_and_can_be_overridden() -> None:

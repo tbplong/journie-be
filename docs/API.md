@@ -217,8 +217,8 @@ quả với cùng input và cùng dữ liệu.
 
 | Field | Kiểu | Mặc định | Mô tả |
 |---|---|---|---|
-| `extraction` | `Extraction` | bắt buộc | Nguyên `extraction` từ `/chat` (đủ mọi key) |
-| `selected_ids` | string[], ≤ 50 | `[]` | Id địa điểm người dùng đã chọn; nơi gần chúng được cộng điểm |
+| `extraction` | `Extraction` | bắt buộc | Nguyên `extraction` từ `/chat` (đủ mọi key); mỗi list ≤ 20 phần tử, mỗi list atom ≤ 50, mỗi phần tử/`value` ≤ 200 ký tự |
+| `selected_ids` | string[], ≤ 50 | `[]` | Id địa điểm người dùng đã chọn; nơi gần chúng được cộng điểm, bản thân chúng không được gợi ý lại |
 | `section` | string \| null | `null` | Chỉ trả section có `key` này (dùng cho "xem thêm") |
 | `offset` | int ≥ 0 | `0` | Bỏ qua bao nhiêu item trong mỗi section trả về |
 | `limit` | int 1–20 | `6` | Số item mỗi section |

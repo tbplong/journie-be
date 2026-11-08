@@ -12,6 +12,8 @@ NameField = Literal["must_visit", "preferred_places", "avoid"]
 # so the lists are bounded here; Extraction itself is the Gemini schema and must not change.
 MAX_LIST_ITEMS = 20
 MAX_CONSTRAINTS = 50
+# Each entry is matched against every place in SQL; a real name or interest is far shorter.
+MAX_ENTRY_CHARS = 200
 
 
 class RetrievalRequest(BaseModel):
@@ -47,8 +49,14 @@ class RetrievalRequest(BaseModel):
             "soft_constraints": MAX_CONSTRAINTS,
         }
         for name, limit in limits.items():
-            if len(getattr(self.extraction, name)) > limit:
+            entries = getattr(self.extraction, name)
+            if len(entries) > limit:
                 raise ValueError(f"extraction.{name} has more than {limit} entries")
+            texts = [getattr(entry, "value", entry) for entry in entries]
+            if any(len(text) > MAX_ENTRY_CHARS for text in texts):
+                raise ValueError(
+                    f"extraction.{name} has an entry longer than {MAX_ENTRY_CHARS} characters"
+                )
         return self
 
 

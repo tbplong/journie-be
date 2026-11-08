@@ -67,11 +67,10 @@ class TripWindow:
 
     def day_window(self, weekday: int) -> list[Interval]:
         start = 0 if self.start is None else self.start
-        end = DAY_MIN if self.end is None else self.end
-        if self.start is not None and self.end is not None and end <= start:
+        # The schema has no 24:00: an end of 00:00 is the midnight that ends the day.
+        end = DAY_MIN if self.end in (None, 0) else self.end
+        if self.start is not None and end <= start:
             end += DAY_MIN  # 22:00-02:00 runs into the next morning
-        if end == start:
-            end = start + 1
         return _wrap(weekday * DAY_MIN + start, weekday * DAY_MIN + end)
 
 
