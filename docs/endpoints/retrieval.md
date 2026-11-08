@@ -11,8 +11,9 @@ tìm trong sổ địa điểm TP.HCM:
 2. **Tìm theo sở thích**: "thích cà phê" → lấy kệ "Cà phê". "Thích phở" không có kệ riêng → tìm
    chữ "phở" trong tên và mô tả, rồi xếp kết quả vào kệ phù hợp nhất.
 3. **Gạch bỏ**: nơi cần tránh, nơi đóng cửa vào lúc người dùng rảnh.
-4. **Chấm điểm và xếp hàng**: nơi khớp tốt, chất lượng cao, mở cửa đúng giờ, gần chỗ đã chọn thì
-   lên trước; mỗi kệ không để một kiểu quán chiếm hết chỗ.
+4. **Chấm điểm và xếp hàng**: nơi khớp tốt, mở cửa đúng giờ, gần chỗ đã chọn thì lên trước. Chất
+   lượng chỉ là ngưỡng phải đạt, không phải điểm xếp hạng; các nơi phù hợp ngang nhau được xáo theo
+   `seed`. Mỗi kệ không để một kiểu quán (hay nơi nổi tiếng) chiếm hết chỗ.
 5. **Giải thích**: mỗi gợi ý kèm lý do lấy từ dữ liệu ("Michelin Bib Gourmand", "Mở 06:00–22:00
    thứ Bảy"), không có câu nào do AI viết.
 
@@ -283,6 +284,8 @@ Các ngưỡng là hằng số có tên ở đầu file (`RESOLVE_MIN`, `RESOLVE
 
 - **`ELIGIBLE`**: điều kiện chung cho mọi truy vấn ứng viên: `recommendable`, không nằm ngoài
   vùng, không nằm trong `avoid_ids`, category không thuộc node bị tránh.
+- **`SUGGESTABLE`**: ngưỡng chất lượng `confidence ≥ MIN_CONFIDENCE` (0.7) cho ứng viên theo kệ và
+  hit từ khoá. Nơi người dùng gọi tên (`preferred_places`, `must_visit`) không qua ngưỡng này.
 - **`in_nodes`**: "category thuộc một trong các node". Node sub so với `category`, node top so
   với `category_top` (cột sinh tự động trong schema). Cả hai cột đều có index.
 - **`keyword_hits`** cho mỗi sở thích không phải kệ chuẩn, trả `{poi_id: loại bằng chứng}`:
@@ -332,17 +335,22 @@ Output thật: chuyến đi bắt đầu 2026-11-21 (thứ Bảy), 2 ngày, rả
 
 ### 11. [scoring.py](../../app/services/retrieval/scoring.py): điểm, lý do, flag
 
-**Điểm = trung bình có trọng số của các phần có mặt, + 0.25 nếu là nơi người dùng thích:**
+**Điểm = độ phù hợp (trung bình có trọng số của các phần có mặt) + 0 × `quality` + 0.06 ×
+`explore`, + 0.25 nếu là nơi người dùng thích.** `quality` cố định theo từng nơi, nên nếu là điểm
+xếp hạng thì nơi nổi tiếng luôn thắng; với trọng số > 0, dù chỉ 0.01, 3 vị trí đầu kệ ẩm thực
+luôn là tier A (places_1000). Hai phần cộng thêm đều nhỏ hơn nhiều so với một bậc bằng chứng
+(khớp tên so với category lệch ~0.17), nên tín hiệu thật luôn thắng.
 
 | Phần | Trọng số | Cách tính | Có mặt khi |
 |---|---|---|---|
 | `match` | 0.55 | Bằng chứng mạnh nhất × mức độ. `structured` 1.0, `name` 0.8, `category` 0.6, `text` 0.5; × 1.0 nếu bắt buộc, × 0.85 nếu ưu tiên | luôn |
-| `quality` | 0.30 | 0.45 × tier (A 1.0, B 0.6, C 0.3) + 0.25 × min(số nguồn giới thiệu, 4)/4 + 0.15 × Michelin (sao 1.0, Bib 0.8, Selected 0.5) + 0.15 × confidence | luôn |
+| `quality` | cộng 0 | 0.45 × tier (A 1.0, B 0.6, C 0.3) + 0.25 × min(số nguồn giới thiệu, 4)/4 + 0.15 × Michelin (sao 1.0, Bib 0.8, Selected 0.5) + 0.15 × confidence | luôn |
 | `time_fit` | 0.15 | `fit` của kiểm tra giờ; 0 nếu `hours_maybe_closed`; 0.3 nếu không biết giờ | phiếu có ngày/giờ |
 | `proximity` | 0.15 | `exp(−km / 2)` tới nơi gần nhất trong số nơi đã ghim/đã chọn (khoảng cách haversine) | có nơi ghim hoặc `selected_ids` |
+| `explore` | cộng 0.06 | 4 byte đầu của `sha256("seed:id")` quy về [0, 1). Seed = `request.seed`, không có thì lấy từ hash `extraction` (`service.request_seed`) | luôn |
 
 "Trung bình của các phần có mặt" nghĩa là phần vắng mặt không kéo điểm xuống: không có ngày giờ
-thì điểm chỉ tính từ `match` và `quality` (chia cho 0.85, không phải cho 1.15).
+thì độ phù hợp chỉ là `match`.
 
 **`reasons`** chỉ ghép từ giá trị đã lưu: nhãn Michelin, "Khớp “phở”" / "Mô tả có “phở”", nhãn
 cuisine, "Có món chay", giờ mở của thứ phù hợp, "Được N nguồn giới thiệu", giá. Không có câu nào
@@ -389,7 +397,8 @@ do AI sinh, nên mọi lý do đều kiểm chứng được.
 
 - Ba tầng: nơi người dùng thích → nơi khớp từ khoá đã gộp → còn lại. Trong mỗi tầng xếp theo điểm.
 - Đa dạng hoá tham lam trên 48 nơi đầu: trong mỗi cửa sổ 8 nơi, tối đa 2 nơi cùng cuisine chính, 4
-  nơi cùng phường, 4 nơi Michelin. Section do Michelin dẫn dắt không bị giới hạn Michelin. Cuisine
+  nơi cùng phường, 3 nơi nổi tiếng (tier A hoặc Michelin). Section do Michelin dẫn dắt không bị
+  giới hạn nơi nổi tiếng. Cuisine
   quá phổ biến (`vietnamese`, `diner`, `asian`, `regional`) không bị giới hạn. Không nơi nào thoả
   thì vẫn lấy nơi điểm cao nhất, nên không bao giờ mất kết quả.
 
@@ -459,7 +468,8 @@ Script import: upsert theo `id` (chạy lại an toàn), `--prune` xoá id khôn
   đa 5 phút.
 - **Lọc `section` làm sau khi đã tính toàn bộ**: "xem thêm" một section vẫn tốn công như request
   đầy đủ.
-- **Các ngưỡng và trọng số** (0.6/0.15/0.35, 0.55/0.30/0.15/0.15, 60%/0.3, caps đa dạng) là giá
+- **Các ngưỡng và trọng số** (0.6/0.15/0.35, 0.55/0.15/0.15, quality 0 / explore 0.06, confidence 0.7, 60%/0.3, caps
+  đa dạng) là giá
   trị khởi điểm, chưa được hiệu chỉnh trên dữ liệu thật lớn.
 - **Cấu hình từ vựng** (`keyword_map`, `poi_overrides`) còn liệt kê tay. Xem thảo luận về việc
   chuyển chúng sang dữ liệu trước khi mở rộng.

@@ -1,5 +1,6 @@
 """retrieve(): extraction -> pinned places, disambiguation and ranked sections. No LLM."""
 
+import hashlib
 import time
 
 from psycopg import AsyncConnection
@@ -22,7 +23,7 @@ from app.services.retrieval.interests import plan_interests
 from app.services.retrieval.poi import Poi
 from app.services.retrieval.sections import ANY_TIME, Scored, SectionResult, assemble, to_card
 
-RETRIEVAL_VERSION = "retrieval-v0"
+RETRIEVAL_VERSION = "retrieval-v1"
 SUPPORTED_DESTINATION = "Ho Chi Minh City"
 
 
@@ -39,6 +40,14 @@ def is_empty(extraction: Extraction) -> bool:
     return all(getattr(extraction, name) is None for name in scalars) and not any(
         getattr(extraction, name) for name in lists
     )
+
+
+def request_seed(request: RetrievalRequest) -> int:
+    """The request's seed, else one derived from the extraction: same order across pages."""
+    if request.seed is not None:
+        return request.seed
+    digest = hashlib.sha256(request.extraction.model_dump_json().encode()).digest()
+    return int.from_bytes(digest[:4], "big")
 
 
 def _meta(started: float, data_version: str | None) -> RetrievalMeta:
@@ -168,7 +177,14 @@ async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> Retrieva
         if (poi := by_id.get(poi_id)) and poi.latitude is not None and poi.longitude is not None
     ]
     results, section_warnings = assemble(
-        plan, pois, hits, window, frozenset(preferred), frozenset(pinned), anchors
+        plan,
+        pois,
+        hits,
+        window,
+        frozenset(preferred),
+        frozenset(pinned),
+        anchors,
+        request_seed(request),
     )
     if request.section is not None:
         results = [result for result in results if result.spec.key == request.section]

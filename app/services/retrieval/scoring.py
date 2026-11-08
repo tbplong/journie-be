@@ -1,10 +1,14 @@
 """Scores, reasons and flags for one POI in one section (spec 6.6). Pure.
 
 ``score_parts`` stay separate so ranking is explainable and the weights can be tuned with the
-eval set. The total is a weighted mean over the parts that apply to the request: ``time_fit``
-only when the traveller gave dates or times, ``proximity`` only when places are already chosen.
+eval set. The total is relevance, a weighted mean over the parts that apply to the request
+(``time_fit`` only when the traveller gave dates or times, ``proximity`` only when places are
+already chosen), plus two small terms that only reorder places of about equal relevance:
+``quality`` (static, so it must not decide the ranking: popular places would always win) and
+``explore`` (seeded per request, so equally relevant places take turns at the top).
 """
 
+import hashlib
 import math
 from dataclasses import dataclass
 from typing import Literal
@@ -13,7 +17,11 @@ from app.services.retrieval.config import KEYWORD_MAP
 from app.services.retrieval.hours import HoursCheck, hours_reason
 from app.services.retrieval.poi import Poi
 
-WEIGHTS = {"match": 0.55, "quality": 0.30, "time_fit": 0.15, "proximity": 0.15}
+WEIGHTS = {"match": 0.55, "time_fit": 0.15, "proximity": 0.15}
+# Both stay well below one evidence step (name vs category match moves relevance by ~0.17).
+# quality is 0: any constant bonus wins the top of a large pool (places_1000, food: with 0.01 the
+# first 3 of 6 were tier A for 20/20 seeds; with 0, 0.7 of 6). Tune with the eval set.
+ADDED_WEIGHTS = {"quality": 0.0, "explore": 0.06}
 PREFERRED_BONUS = 0.25
 
 # How well a POI matches a request, by the type of evidence.
@@ -80,10 +88,20 @@ def proximity(poi: Poi, anchors: list[tuple[float, float]]) -> float | None:
     return math.exp(-nearest / PROXIMITY_SCALE_KM)
 
 
+def explore(seed: int, poi_id: str) -> float:
+    """Deterministic pseudo-random value in [0, 1) for (seed, POI)."""
+    digest = hashlib.sha256(f"{seed}:{poi_id}".encode()).digest()
+    return int.from_bytes(digest[:4], "big") / 2**32
+
+
 def total(parts: dict[str, float | None]) -> float:
-    used = {name: value for name, value in parts.items() if value is not None}
+    used = {name: value for name, value in parts.items() if value is not None and name in WEIGHTS}
     weight = sum(WEIGHTS[name] for name in used)
-    return sum(WEIGHTS[name] * value for name, value in used.items()) / weight if weight else 0.0
+    relevance = (
+        sum(WEIGHTS[name] * value for name, value in used.items()) / weight if weight else 0.0
+    )
+    added = sum(w * (parts.get(name) or 0.0) for name, w in ADDED_WEIGHTS.items())
+    return relevance + added
 
 
 def reasons(poi: Poi, hits: list[Hit], check: HoursCheck | None) -> list[str]:

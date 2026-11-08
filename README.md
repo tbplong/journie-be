@@ -60,7 +60,11 @@ re-benchmark in journie-data first and bump the version constant.
 There is no LLM: names are matched with `pg_trgm`; interests by taxonomy category; structured
 columns (`config/keyword_map.v1.yaml`: Michelin, vegetarian, bar, cuisines) or full-text search
 serve the other interests. Every `reason` is built from stored columns, and `score_parts` shows the
-`match` / `quality` / `time_fit` / `proximity` split. Opening hours exclude a place only when
+`match` / `time_fit` / `proximity` / `quality` / `explore` split. Places rank by relevance to the
+request, not by quality (tier, Michelin, recommendations): suggestions only need record
+`confidence` >= 0.7, and among equally relevant places a seeded `explore` value picks the order
+(the same request keeps one order; a new `seed` gives other suggestions), with at most 3 famous
+places (tier A or Michelin) per 8. Opening hours exclude a place only when
 they are trusted (medium/high confidence, not contradicted); doubtful ones are flagged
 `hours_maybe_closed`. Page one section with `section` + `offset` + `limit`. Pass
 `selected_ids` to rank places near the ones already picked higher.

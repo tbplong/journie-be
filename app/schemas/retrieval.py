@@ -26,6 +26,15 @@ class RetrievalRequest(BaseModel):
     )
     offset: int = Field(default=0, ge=0, description="Items to skip in each returned section.")
     limit: int = Field(default=6, ge=1, le=20, description="Items per returned section.")
+    seed: int | None = Field(
+        default=None,
+        ge=0,
+        lt=2**32,
+        description=(
+            "Orders equally relevant places. Default: derived from the extraction, so the same "
+            "request (and its pages) keeps one order; send a new seed for other suggestions."
+        ),
+    )
 
     @model_validator(mode="after")
     def bounded_lists(self) -> "RetrievalRequest":

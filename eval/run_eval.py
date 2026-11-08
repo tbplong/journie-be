@@ -5,7 +5,9 @@
 Gold extractions are written by hand, so failures here are retrieval failures, not LLM ones.
 Reports name-resolution accuracy, Precision@5 and nDCG@5 per section, the share of evaluated
 sections with a relevant item in the top 5, and must_not_contain violations (target: 0; the
-exit code is 1 when any occur).
+exit code is 1 when any occur). Diversity per non-empty section's first page (top 6): the
+share of famous places (tier A or Michelin) and the number of distinct wards. The seed is
+fixed, so runs are comparable.
 """
 
 import argparse
@@ -24,7 +26,7 @@ sys.path.insert(0, str(ROOT))
 from app.core.config import Settings
 from app.schemas.extraction import Extraction
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
-from app.services.retrieval import names
+from app.services.retrieval import candidates, names
 from app.services.retrieval.service import retrieve
 
 BASE: dict[str, Any] = {
@@ -47,6 +49,8 @@ BASE: dict[str, Any] = {
     "needs_clarification": False,
 }
 K = 5
+PAGE = 6  # default RetrievalRequest.limit
+SEED = 0
 
 
 def ndcg(ranked: list[str], relevant: dict[str, int]) -> float:
@@ -60,7 +64,7 @@ async def run_case(conn: AsyncConnection, case: dict[str, Any]) -> dict[str, Any
     extraction = Extraction.model_validate({**BASE, **case["extraction"]})
     # Every item of every section, so must_not_contain sees past the first page.
     request = RetrievalRequest.model_construct(
-        extraction=extraction, selected_ids=[], section=None, offset=0, limit=10_000
+        extraction=extraction, selected_ids=[], section=None, offset=0, limit=10_000, seed=SEED
     )
     response: RetrievalResponse = await retrieve(conn, request)
     errors: list[str] = []
@@ -127,6 +131,15 @@ async def run_case(conn: AsyncConnection, case: dict[str, Any]) -> dict[str, Any
         first = section.items[0].id if section and section.items else None
         if first != expected_id:
             errors.append(f"top1[{key}] {first} != {expected_id}")
+    pages = [[item.id for item in s.items[:PAGE]] for s in response.sections if s.items]
+    pois = await candidates.fetch_by_ids(conn, [i for page in pages for i in page])
+    result["diversity"] = [
+        (
+            sum(pois[i].tier == "A" or pois[i].michelin is not None for i in page) / len(page),
+            len({pois[i].ward for i in page}),
+        )
+        for page in pages
+    ]
     result["errors"] = errors
     return result
 
@@ -174,6 +187,9 @@ async def main() -> int:
     print(f"| mean P@5 ({len(sections)} sections) | {mean([s['p_at_5'] for s in sections]):.3f} |")
     print(f"| mean nDCG@5 | {mean([s['ndcg_at_5'] for s in sections]):.3f} |")
     print(f"| sections with a relevant top-5 item | {mean([s['hit'] for s in sections]):.3f} |")
+    pages = [d for r in results for d in r["diversity"]]
+    print(f"| famous share of top {PAGE} ({len(pages)} sections) | {mean([d[0] for d in pages]):.3f} |")
+    print(f"| distinct wards in top {PAGE} | {mean([d[1] for d in pages]):.2f} |")
     print(f"| must_not_contain violations | {violations} |")
     return 1 if violations else 0
 

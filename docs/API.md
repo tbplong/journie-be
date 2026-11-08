@@ -222,6 +222,7 @@ quả với cùng input và cùng dữ liệu.
 | `section` | string \| null | `null` | Chỉ trả section có `key` này (dùng cho "xem thêm") |
 | `offset` | int ≥ 0 | `0` | Bỏ qua bao nhiêu item trong mỗi section trả về |
 | `limit` | int 1–20 | `6` | Số item mỗi section |
+| `seed` | int 0–2³²−1 \| null | `null` | Thứ tự giữa các nơi phù hợp ngang nhau. `null`: lấy từ hash của `extraction`, nên cùng request (và các trang của nó) giữ một thứ tự; gửi seed khác để có gợi ý khác |
 
 Giới hạn để một request không gây quá nhiều truy vấn: `interests`, `must_visit`, `avoid`,
 `preferred_places` tối đa **20** phần tử mỗi danh sách; `hard_constraints`,
@@ -263,7 +264,7 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
         {
           "id": "fashionista-cafe-bce683", "name": "Fashionista Café", "category": "food.cafe",
           "score": 0.6474,
-          "score_parts": {"match": 0.51, "quality": 0.737, "time_fit": 1.0, "proximity": 0.619},
+          "score_parts": {"match": 0.51, "quality": 0.737, "time_fit": 1.0, "proximity": 0.619, "explore": 0.412},
           "reasons": ["Michelin Selected", "Mở 09:00–22:00 thứ Bảy"],
           "flags": ["no_price"]
         }
@@ -276,7 +277,7 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
         {
           "id": "pho-minh-e037d7", "name": "Phở Minh", "category": "food.restaurant",
           "score": 0.7535,
-          "score_parts": {"match": 0.68, "quality": 0.77, "time_fit": 1.0, "proximity": 0.743},
+          "score_parts": {"match": 0.68, "quality": 0.77, "time_fit": 1.0, "proximity": 0.743, "explore": 0.873},
           "reasons": ["Michelin Bib Gourmand", "Khớp “phở”", "Quán ăn", "Mở 06:30–10:00 thứ Bảy"],
           "flags": ["hours_low_confidence", "no_price"]
         }
@@ -286,7 +287,7 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
   ],
   "warnings": [],
   "meta": {
-    "retrieval_version": "retrieval-v0",
+    "retrieval_version": "retrieval-v1",
     "interest_map_version": "interest_map.v2",
     "keyword_map_version": "keyword_map.v1",
     "data_version": "places_1000",
@@ -353,19 +354,21 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
 - **Giờ mở cửa**: chỉ áp dụng khi extraction có ngày hoặc giờ. Một nơi chỉ bị **loại** khi giờ
   đáng tin (confidence medium/high, không mâu thuẫn) nói là đóng; trường hợp nghi ngờ thì giữ
   lại và gắn flag.
-- **Điểm** (`score`): trung bình có trọng số của các phần có mặt, cộng 0.25 nếu là nơi người
-  dùng thích (`preferred_places`):
+- **Điểm** (`score`): độ phù hợp (trung bình có trọng số của các phần có mặt) + 0.06 × `explore`
+  (+ 0 × `quality`), cộng 0.25 nếu là nơi người dùng thích (`preferred_places`). Chất lượng chỉ
+  là ngưỡng: nơi không do người dùng gọi tên phải có `confidence` ≥ 0.7.
 
   | Phần | Trọng số | Có khi |
   |---|---|---|
   | `match` | 0.55 | Luôn có. Cột có cấu trúc 1.0, tên 0.8, category 0.6, mô tả 0.5; nhân 0.85 nếu chỉ là ưu tiên |
-  | `quality` | 0.30 | Luôn có. Từ tier, số nguồn giới thiệu, Michelin, độ tin cậy dữ liệu |
+  | `quality` | cộng 0 | Luôn có, chỉ để giải thích. Từ tier, số nguồn giới thiệu, Michelin, độ tin cậy dữ liệu |
+  | `explore` | cộng 0.06 | Luôn có. Giá trị giả ngẫu nhiên theo (`seed`, id): xếp thứ tự các nơi phù hợp ngang nhau |
   | `time_fit` | 0.15 | Có ngày hoặc giờ |
   | `proximity` | 0.15 | Có `pinned` hoặc `selected_ids` (càng gần càng cao) |
 
 - **Thứ tự trong section**: nơi người dùng thích → nơi khớp từ khoá → còn lại; trong mỗi nhóm
-  theo điểm, có giới hạn lặp lại cùng món ăn / phường / Michelin trong mỗi 8 item đầu để danh
-  sách đa dạng.
+  theo điểm, có giới hạn lặp lại cùng món ăn / phường / nơi nổi tiếng (tier A hoặc Michelin, tối
+  đa 3) trong mỗi 8 item đầu để danh sách đa dạng.
 
 ---
 

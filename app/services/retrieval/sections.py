@@ -25,6 +25,7 @@ from app.services.retrieval.scoring import (
     Evidence,
     Hit,
     card_flags,
+    explore,
     match_score,
     proximity,
     quality_score,
@@ -37,10 +38,11 @@ from app.services.retrieval.taxonomy import covers, depth, top
 PREFERRED_KEY = "preferred"
 PREFERRED_LABEL = "Địa điểm bạn thích"
 EMPTY_NOTE = "Chưa tìm thấy địa điểm phù hợp trong dữ liệu."
-# Diversity caps per window of top items. Very common cuisines are not capped.
+# Diversity caps per window of top items. Very common cuisines are not capped. "Famous" is
+# tier A or Michelin: capped so well-documented places don't fill every list.
 DIVERSITY_WINDOW = 8
 DIVERSITY_DEPTH = 48
-CAP_CUISINE, CAP_WARD, CAP_MICHELIN = 2, 4, 4
+CAP_CUISINE, CAP_WARD, CAP_FAMOUS = 2, 4, 3
 BROAD_CUISINES = frozenset({"vietnamese", "diner", "asian", "regional"})
 
 # A keyword's home is the node with at least this share of its weighted hits. A hit found only
@@ -248,13 +250,13 @@ def _diversity_keys(poi: Poi) -> list[str]:
         keys.append(f"c:{cuisine}")
     if poi.ward:
         keys.append(f"w:{poi.ward}")
-    if poi.michelin:
-        keys.append("m")
+    if poi.tier == "A" or poi.michelin:
+        keys.append("f")
     return keys
 
 
-def _fits(item: Scored, counts: Counter[str], michelin_capped: bool) -> bool:
-    caps = {"c": CAP_CUISINE, "w": CAP_WARD, "m": CAP_MICHELIN if michelin_capped else None}
+def _fits(item: Scored, counts: Counter[str], famous_capped: bool) -> bool:
+    caps = {"c": CAP_CUISINE, "w": CAP_WARD, "f": CAP_FAMOUS if famous_capped else None}
     for key in _diversity_keys(item.poi):
         cap = caps[key[0]]
         if cap is not None and counts[key] >= cap:
@@ -262,9 +264,9 @@ def _fits(item: Scored, counts: Counter[str], michelin_capped: bool) -> bool:
     return True
 
 
-def diversify(items: list[Scored], michelin_capped: bool) -> list[Scored]:
+def diversify(items: list[Scored], famous_capped: bool) -> list[Scored]:
     """Greedy re-rank of score-ordered items: per window of top items, cap repeats of
-    cuisine/ward/Michelin. Past ``DIVERSITY_DEPTH`` the plain score order is kept.
+    cuisine/ward/famous places. Past ``DIVERSITY_DEPTH`` the plain score order is kept.
     """
     remaining, tail = items[:DIVERSITY_DEPTH], items[DIVERSITY_DEPTH:]
     ordered: list[Scored] = []
@@ -272,14 +274,14 @@ def diversify(items: list[Scored], michelin_capped: bool) -> list[Scored]:
     while remaining:
         if len(ordered) % DIVERSITY_WINDOW == 0:
             counts = Counter()
-        pick = next((i for i in remaining if _fits(i, counts, michelin_capped)), remaining[0])
+        pick = next((i for i in remaining if _fits(i, counts, famous_capped)), remaining[0])
         remaining.remove(pick)
         ordered.append(pick)
         counts.update(_diversity_keys(pick.poi))
     return [*ordered, *tail]
 
 
-def order_items(items: list[Scored], michelin_capped: bool) -> list[Scored]:
+def order_items(items: list[Scored], famous_capped: bool) -> list[Scored]:
     """Preferred places first, then keyword hits merged into the section, then the rest;
     score order with diversity within each tier."""
     items = sorted(items, key=lambda s: (-s.score, s.poi.id))
@@ -288,7 +290,7 @@ def order_items(items: list[Scored], michelin_capped: bool) -> list[Scored]:
         [s for s in items if not s.preferred and s.keyword_hit],
         [s for s in items if not s.preferred and not s.keyword_hit],
     )
-    return [item for tier in tiers for item in diversify(tier, michelin_capped)]
+    return [item for tier in tiers for item in diversify(tier, famous_capped)]
 
 
 @dataclass(frozen=True)
@@ -296,6 +298,7 @@ class _Context:
     hits: KeywordHits
     window: TripWindow
     anchors: list[tuple[float, float]]
+    seed: int
 
     def hours(self, poi: Poi) -> tuple[HoursCheck, list[str]] | None:
         """Hours check and flags; None when trusted hours say the POI is closed."""
@@ -320,6 +323,7 @@ class _Context:
             "quality": quality_score(poi),
             "time_fit": time_fit(check, flags) if self.window.active else None,
             "proximity": proximity(poi, self.anchors),
+            "explore": explore(self.seed, poi.id),
         }
         score = total(parts) + (PREFERRED_BONUS if preferred else 0.0)
         kept = {name: round(value, 3) for name, value in parts.items() if value is not None}
@@ -350,7 +354,7 @@ def _best_placement(
 
 
 def _finish(spec: SectionSpec, items: list[Scored], warnings: list[str]) -> SectionResult | None:
-    items = order_items(items, michelin_capped=not spec.michelin_driven)
+    items = order_items(items, famous_capped=not spec.michelin_driven)
     for request in spec.merged:
         if not any(hit.raw == request.raw for item in items for hit in item.hits):
             warnings.append(f"Không tìm thấy địa điểm cho “{request.raw}”")
@@ -372,14 +376,16 @@ def assemble(
     preferred_ids: frozenset[str] = frozenset(),
     pinned_ids: frozenset[str] = frozenset(),
     anchors: list[tuple[float, float]] | None = None,
+    seed: int = 0,
 ) -> tuple[list[SectionResult], list[str]]:
-    """Score every candidate, assign it to one section and order each section."""
+    """Score every candidate, assign it to one section and order each section. ``seed`` picks
+    the order of equally relevant places (scoring.explore)."""
     homes: dict[str, str | None] = {}
     pruned: KeywordHits = {}
     for key, found in hits.items():
         homes[key], pruned[key] = prune_hits(found, pois)
     specs, warnings = build_specs(plan, pruned, homes)
-    ctx = _Context(pruned, window, anchors or [])
+    ctx = _Context(pruned, window, anchors or [], seed)
     members: dict[str, list[Scored]] = {spec.key: [] for spec in specs}
     for poi in pois.values():
         if poi.id in pinned_ids or avoided(poi, plan.avoid):

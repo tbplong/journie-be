@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.retrieval import get_connection
 from app.main import app
+from app.schemas.retrieval import RetrievalRequest
+from app.services.retrieval.service import request_seed
 from tests.test_retrieval_names_interests import BASE
 
 
@@ -38,7 +40,7 @@ def test_statuses_that_need_no_query(client: TestClient) -> None:
 
     empty = client.post("/retrieval", json={"extraction": {**BASE, "destination": None}}).json()
     assert empty["status"] == "empty_extraction"
-    assert empty["meta"]["retrieval_version"] == "retrieval-v0"
+    assert empty["meta"]["retrieval_version"] == "retrieval-v1"
 
 
 def test_request_validation(client: TestClient) -> None:
@@ -61,3 +63,15 @@ def test_oversized_lists_are_rejected(client: TestClient, field: str, value: lis
     response = client.post("/retrieval", json={"extraction": {**BASE, field: value}})
     assert response.status_code == 422
     assert f"extraction.{field} has more than" in response.text
+
+
+def test_seed_defaults_to_the_extraction_and_can_be_overridden() -> None:
+    def request(**fields: object) -> RetrievalRequest:
+        return RetrievalRequest.model_validate(
+            {"extraction": {**BASE, **fields.pop("ext", {})}, **fields}
+        )
+
+    cafe = request(ext={"interests": ["cafe"]})
+    assert request_seed(cafe) == request_seed(request(ext={"interests": ["cafe"]}, offset=6))
+    assert request_seed(cafe) != request_seed(request(ext={"interests": ["food"]}))
+    assert request_seed(request(ext={"interests": ["cafe"]}, seed=7)) == 7

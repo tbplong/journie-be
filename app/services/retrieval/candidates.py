@@ -1,7 +1,8 @@
 """SQL candidate generation (spec 6.3-6.5): category candidates and keyword hits.
 
 Eligibility (recommendable, inside the region, not avoided by id or category) is applied in SQL;
-hours, scoring and section assignment happen in Python on the returned rows.
+hours, scoring and section assignment happen in Python on the returned rows. Places the
+traveller did not name must also pass the quality bar ``SUGGESTABLE``.
 """
 
 import time
@@ -19,6 +20,10 @@ from app.services.retrieval.text import fold_case, lexeme_query, norm
 # word_similarity on the accent-preserving name. 0.6 was too loose: "banh mi" scored 0.625
 # against "banh cuon". On folded text "pho" scores 1.0 against "thanh pho", hence name_text.
 NAME_HIT_MIN = 0.8
+# Quality is a minimum bar, not a ranking signal (scoring.py): the pipeline's record confidence
+# must reach it. places_1000: 0.7 drops the 12 worship places at 0.64; 0.8 would also drop the
+# 69 single-source places at 0.76 (half the bars, every karaoke). A missing value fails.
+MIN_CONFIDENCE = 0.7
 
 
 def in_nodes(param: str) -> str:
@@ -32,16 +37,22 @@ ELIGIBLE = f"""
     AND NOT (id = ANY(%(avoid_ids)s))
     AND NOT {in_nodes("avoid_nodes")}
 """
+SUGGESTABLE = "COALESCE(confidence, 0) >= %(min_confidence)s"
 
 
 def eligibility(avoid: AvoidRules, avoid_ids: set[str]) -> dict[str, Any]:
-    return {"avoid_ids": sorted(avoid_ids), "avoid_nodes": sorted(avoid.nodes)}
+    return {
+        "avoid_ids": sorted(avoid_ids),
+        "avoid_nodes": sorted(avoid.nodes),
+        "min_confidence": MIN_CONFIDENCE,
+    }
 
 
 async def fetch_pois(
     conn: AsyncConnection, nodes: set[str], ids: set[str], params: dict[str, Any]
 ) -> dict[str, Poi]:
-    """Eligible POIs under the given taxonomy nodes, plus the given ids (if eligible)."""
+    """Eligible, suggestable POIs under the given taxonomy nodes, plus the given ids (if
+    eligible; keyword hits are already suggestable, preferred places skip the quality bar)."""
     # shortcut: loads every eligible POI of the sections (hours and scores are computed in
     # Python), on every request and page; fine below ~10k eligible POIs, beyond that pre-rank in
     # SQL by tier/recommended_by_count and LIMIT per node.
@@ -49,7 +60,7 @@ async def fetch_pois(
         return {}
     sql = f"""
         SELECT {", ".join(POI_COLUMNS)} FROM pois
-        WHERE {ELIGIBLE} AND ({in_nodes("nodes")} OR id = ANY(%(ids)s))
+        WHERE {ELIGIBLE} AND (({in_nodes("nodes")} AND {SUGGESTABLE}) OR id = ANY(%(ids)s))
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(sql, {**params, "nodes": sorted(nodes), "ids": sorted(ids)})
@@ -68,7 +79,7 @@ async def fetch_by_ids(conn: AsyncConnection, ids: list[str]) -> dict[str, Poi]:
 
 STRUCTURED_SQL = f"""
     SELECT id FROM pois
-    WHERE {ELIGIBLE}
+    WHERE {ELIGIBLE} AND {SUGGESTABLE}
       AND (michelin = ANY(%(michelin)s) OR cuisine && %(cuisine)s OR features && %(features)s)
 """
 
@@ -82,7 +93,7 @@ TEXT_SQL = f"""
                name_lex @@ %(tsq)s::tsquery
                OR word_similarity(%(q)s, name_text) >= %(name_min)s AS name_hit
         FROM pois
-        WHERE {ELIGIBLE}
+        WHERE {ELIGIBLE} AND {SUGGESTABLE}
     ) AS scored
     WHERE name_hit OR search_lex @@ %(tsq)s::tsquery
 """

@@ -19,8 +19,9 @@ from psycopg import AsyncConnection
 
 from app.core.config import Settings
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
-from app.services.retrieval import names
+from app.services.retrieval import candidates, names
 from app.services.retrieval.config import INTEREST_MAP
+from app.services.retrieval.interests import AvoidRules
 from app.services.retrieval.service import retrieve
 from app.services.retrieval.text import fold_case, has_diacritics, lexeme_query, norm
 from tests.test_retrieval_names_interests import BASE
@@ -126,6 +127,38 @@ def test_pinned_avoid_and_status() -> None:
     assert "cho-ben-thanh-68e3af" not in listed
     assert retrieval(destination="Hanoi", interests=["food"]).status == "unsupported_destination"
     assert response.meta.data_version == "places_1000"
+
+
+def test_quality_bar_applies_to_suggestions_not_to_named_places() -> None:
+    async def job(conn: AsyncConnection) -> tuple[set[str], set[str]]:
+        cur = await conn.execute(
+            "SELECT id FROM pois WHERE confidence < %s", (candidates.MIN_CONFIDENCE,)
+        )
+        low = {row[0] for row in await cur.fetchall()}
+        params = candidates.eligibility(AvoidRules(), set())
+        nodes = {node for group in INTEREST_MAP.groups.values() for node in group.nodes}
+        return low, set(await candidates.fetch_pois(conn, nodes, set(), params))
+
+    low, suggested = run(job)
+    assert low, "no place below the bar: pick another fixture"
+    assert not low & suggested
+    assert "chua-pho-chieu-1f5bf5" in low
+    pinned = retrieval(must_visit=["Chùa Phổ Chiếu"], interests=["culture"]).pinned
+    assert [p.id for p in pinned] == ["chua-pho-chieu-1f5bf5"]
+
+
+def test_seed_changes_the_order_and_pages_stay_consistent() -> None:
+    def page(seed: int | None, offset: int = 0) -> list[str]:
+        request = RetrievalRequest.model_validate(
+            {"extraction": {**BASE, "interests": ["cafe"]}, "seed": seed, "offset": offset}
+        )
+        response = run(lambda conn: retrieve(conn, request))
+        return [item.id for item in response.sections[0].items]
+
+    assert page(1) == page(1)
+    assert page(1) != page(2)
+    first, second = page(None), page(None, offset=6)
+    assert len(first) == len(second) == 6 and not set(first) & set(second)
 
 
 # Words stored "as written" (weight A) in each POI's search document.

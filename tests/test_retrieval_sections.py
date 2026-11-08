@@ -156,11 +156,68 @@ def test_required_empty_and_beach_warn() -> None:
     assert any("park" in w for w in warnings)
 
 
-def test_no_interest_uses_default_sections_by_quality() -> None:
+def test_no_interest_uses_default_sections() -> None:
     sections, _, _ = sections_for(
         [poi("low", tier="C"), poi("high", tier="A"), poi("pagoda", "culture_religion.pagoda")]
     )
-    assert sections == {"food": ["high", "low"], "culture": ["pagoda"]}
+    assert set(sections["food"]) == {"high", "low"}
+    assert sections["culture"] == ["pagoda"]
+
+
+def ranked(pois: list[Poi], seed: int, hits: dict | None = None, **ext: Any) -> list[str]:
+    plan = plan_interests(extraction(**ext))
+    results, _ = assemble(plan, {p.id: p for p in pois}, hits or {}, ANY, seed=seed)
+    return [i.poi.id for r in results for i in r.items]
+
+
+# Equally relevant restaurants: 10 well-documented, 40 with no recommendations.
+FAMOUS = [poi(f"a{i}", tier="A", recommended_by_count=3, confidence=0.9) for i in range(10)]
+PLAIN = [poi(f"d{i}", tier="D", confidence=0.9) for i in range(40)]
+
+
+def test_equal_relevance_order_is_seeded_not_by_quality() -> None:
+    orders = {seed: ranked([*FAMOUS, *PLAIN], seed, interests=["food"]) for seed in range(20)}
+    assert all(ranked([*FAMOUS, *PLAIN], s, interests=["food"]) == orders[s] for s in (0, 7))
+    assert len({tuple(order[:6]) for order in orders.values()}) == 20
+    firsts = {order[0][0] for order in orders.values()}
+    assert firsts == {"a", "d"}  # quality alone does not decide the top
+
+
+def test_famous_places_are_capped_per_window() -> None:
+    for seed in range(20):
+        top = ranked([*FAMOUS, *PLAIN], seed, interests=["food"])[:8]
+        assert sum(poi_id.startswith("a") for poi_id in top) <= 3
+
+
+def test_michelin_request_is_not_capped() -> None:
+    stars = [poi(f"s{i}", tier="A", michelin="star", confidence=0.9) for i in range(10)]
+    hits = {"kw:michelin": {p.id: "structured" for p in stars}}
+    for seed in range(5):
+        assert len(ranked([*stars, *PLAIN], seed, hits, interests=["michelin"])[:8]) == 8
+
+
+def test_real_signals_beat_tier_for_every_seed() -> None:
+    famous_text = poi("famous", tier="A", recommended_by_count=4, michelin="star", confidence=1.0)
+    plain_name = poi("plain", tier="D", confidence=0.8)
+    hits = {"kw:pho": {"famous": "text", "plain": "name"}}
+    evening = TripWindow(None, to_minutes("19:00"), to_minutes("21:00"))
+    morning_only = {day: [["06:00", "11:00"]] for day in DAYS}
+    doubtful = poi(
+        "doubtful",
+        tier="A",
+        recommended_by_count=4,
+        confidence=1.0,
+        opening_hours=morning_only,
+        hours_confidence="low",
+    )
+    open_plain = poi("open", tier="D", confidence=0.8, opening_hours=EVENING)
+    plan = plan_interests(extraction(interests=["food"]))
+    for seed in range(20):
+        assert ranked([famous_text, plain_name], seed, hits, interests=["phở"])[0] == "plain"
+        results, _ = assemble(
+            plan, {"doubtful": doubtful, "open": open_plain}, {}, evening, seed=seed
+        )
+        assert results[0].items[0].poi.id == "open"
 
 
 def test_preferred_first_and_orphans_get_their_own_section() -> None:
@@ -185,8 +242,9 @@ def test_diversity_caps_repeated_cuisine_in_window() -> None:
         ]
     }
     results, _ = assemble(plan, pois, {}, ANY)
-    assert [i.poi.id for i in results[0].items] == ["ramen1", "ramen2", "thai", "ramen3"]
-    assert diversify([], michelin_capped=True) == []
+    ids = [i.poi.id for i in results[0].items]
+    assert len(ids) == 4 and "thai" in ids[:3]  # at most two ramen before it, whatever the seed
+    assert diversify([], famous_capped=True) == []
 
 
 def test_reasons_come_from_columns() -> None:
@@ -212,4 +270,4 @@ def test_reasons_come_from_columns() -> None:
         "Giá: 30,000 dong",
     ]
     assert "no_price" not in card.flags
-    assert set(card.score_parts) == {"match", "quality"}
+    assert set(card.score_parts) == {"match", "quality", "explore"}
