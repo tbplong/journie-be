@@ -22,3 +22,6 @@ htmlcov/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Downloaded benchmark data (no licence stated by the source)
+data/benchmarks/

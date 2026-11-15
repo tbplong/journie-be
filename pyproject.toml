@@ -13,6 +13,9 @@ dependencies = [
 ]
 
 [dependency-groups]
+bench = [
+    "ortools>=9.15.6755",
+]
 data = [
     "pyarrow>=18",
 ]

@@ -1,0 +1,300 @@
+{
+  "status": "ok",
+  "pinned": [],
+  "disambiguation": [],
+  "not_found": [],
+  "sections": [
+    {
+      "key": "cafe",
+      "label": "Cà phê",
+      "required": false,
+      "total_matches": 202,
+      "items": [
+        {
+          "id": "hom-nay-cafe-4ac037",
+          "name": "Hom Nay Cafe",
+          "kind": "cafe",
+          "category": "food.cafe",
+          "ward": "Phường Bến Thành",
+          "address": "158/17 Nguyễn Công Trứ, Phường Bến Thành, Thành phố Hồ Chí Minh",
+          "lat": 10.76914,
+          "lon": 106.701029,
+          "score": 0.5698,
+          "score_parts": {
+            "match": 0.51,
+            "quality": 0.138,
+            "explore": 0.997
+          },
+          "reasons": ["Mở 07:00–21:30 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 07:00-21:30",
+          "website": "http://www.instagram.com/homnaycafe",
+          "phone": "+84344995434"
+        },
+        {
+          "id": "allez-boo-1a398f",
+          "name": "Allez Boo",
+          "kind": "cafe",
+          "category": "food.cafe",
+          "ward": "Phường Bến Thành",
+          "address": "195 Pham Ngu Lao Street District 1 (195 Phạm Ngũ Lão, Phường Bến Thành, Thành phố Hồ Chí Minh",
+          "lat": 10.768388,
+          "lon": 106.693428,
+          "score": 0.5696,
+          "score_parts": {
+            "match": 0.51,
+            "quality": 0.336,
+            "explore": 0.993
+          },
+          "reasons": ["Mở 06:00–01:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 06:00-01:00",
+          "website": "http://allezboobar.webnode.vn/",
+          "phone": "+84838361456"
+        },
+        {
+          "id": "cosmos-coffee-88bb91",
+          "name": "Cosmos Coffee",
+          "kind": "cafe",
+          "category": "food.cafe",
+          "ward": "Phường Tân Sơn Nhì",
+          "address": "136 Đ. Tân Kỳ Tân Quý, Phường Tân Sơn Nhì, Thành phố Hồ Chí Minh",
+          "lat": 10.803432,
+          "lon": 106.631882,
+          "score": 0.5696,
+          "score_parts": {
+            "match": 0.51,
+            "quality": 0.138,
+            "explore": 0.994
+          },
+          "reasons": ["Cà phê", "Mở 07:00–23:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 07:00-23:00",
+          "website": "http://www.cosmoscoffee.vn/",
+          "phone": "+84971122206"
+        },
+        {
+          "id": "walya-coffee-f90190",
+          "name": "Walya Coffee",
+          "kind": "cafe",
+          "category": "food.cafe",
+          "ward": "Phường Tân Thuận",
+          "address": "107 Nguyễn Văn Linh, Phường Tân Thuận, Thành phố Hồ Chí Minh",
+          "lat": 10.747363,
+          "lon": 106.722791,
+          "score": 0.5688,
+          "score_parts": {
+            "match": 0.51,
+            "quality": 0.144,
+            "explore": 0.98
+          },
+          "reasons": ["Cà phê", "Mở 06:30–22:30 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 06:30-22:30",
+          "website": "https://walyacoffee.com/",
+          "phone": "+84393886360"
+        },
+        {
+          "id": "chidori-coffee-in-bed-aaa098",
+          "name": "Chidori - Coffee in Bed®",
+          "kind": "cafe",
+          "category": "food.cafe",
+          "ward": "Phường Cầu Kiệu",
+          "address": "06 Cầu Kiệu, Đường Hoa Cau, Phường Cầu Kiệu, Thành phố Hồ Chí Minh",
+          "lat": 10.799343,
+          "lon": 106.688196,
+          "score": 0.5681,
+          "score_parts": {
+            "match": 0.51,
+            "quality": 0.144,
+            "explore": 0.969
+          },
+          "reasons": ["Ẩm thực châu Á", "Mở 08:30–23:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 08:30-23:00",
+          "website": "https://chidori.vn/",
+          "phone": "+84968636302"
+        },
+        {
+          "id": "ca-phe-lan-ban-me-118401",
+          "name": "Cà Phê Lan Ban Mê",
+          "kind": "cafe",
+          "category": "food.cafe",
+          "ward": "Phường Tân Sơn Nhất",
+          "address": "5 Đ. Đồ Sơn, Phường Tân Sơn Nhất, Thành phố Hồ Chí Minh",
+          "lat": 10.804225,
+          "lon": 106.660103,
+          "score": 0.5678,
+          "score_parts": {
+            "match": 0.51,
+            "quality": 0.138,
+            "explore": 0.963
+          },
+          "reasons": ["Mở 06:00–22:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 06:00-22:00",
+          "website": "http://www.phunongbuondon.com/",
+          "phone": "+84934180185"
+        }
+      ],
+      "matched_keywords": [],
+      "note": null
+    },
+    {
+      "key": "kw:karaoke",
+      "label": "Karaoke",
+      "required": false,
+      "total_matches": 25,
+      "items": [
+        {
+          "id": "samba-karaoke-019f4d",
+          "name": "Samba Karaoke",
+          "kind": "entertainment",
+          "category": "entertainment.karaoke",
+          "ward": "Phường Phú Thọ Hòa",
+          "address": "430 Tân Sơn Nhì, Phường Phú Thọ Hòa, Thành phố Hồ Chí Minh",
+          "lat": 10.794203,
+          "lon": 106.628845,
+          "score": 0.735,
+          "score_parts": {
+            "match": 0.68,
+            "quality": 0.114,
+            "explore": 0.916
+          },
+          "reasons": ["Khớp “karaoke”", "Mở 09:00–21:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 09:00-21:00",
+          "website": "http://karaokesamba.vn/",
+          "phone": "+84869691768"
+        },
+        {
+          "id": "karaoke-nnice-524-phan-van-tri-f6c368",
+          "name": "Karaoke Nnice 524 Phan Van Tri",
+          "kind": "entertainment",
+          "category": "entertainment.karaoke",
+          "ward": "Phường Hạnh Thông",
+          "address": "524 Đ. Phan Văn Trị, Phường Hạnh Thông, Thành phố Hồ Chí Minh",
+          "lat": 10.829757,
+          "lon": 106.681335,
+          "score": 0.7302,
+          "score_parts": {
+            "match": 0.68,
+            "quality": 0.114,
+            "explore": 0.836
+          },
+          "reasons": ["Khớp “karaoke”", "Mở 08:00–02:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 08:00-02:00",
+          "website": "http://nnice.com.vn/chi-nhanh",
+          "phone": "+84901899900"
+        },
+        {
+          "id": "karaoke-the-sense-79af12",
+          "name": "Karaoke The Sense",
+          "kind": "entertainment",
+          "category": "entertainment.karaoke",
+          "ward": "Phường Phước Long",
+          "address": "39 Đ. Số 1, Phường Phước Long, Thành phố Hồ Chí Minh",
+          "lat": 10.820246,
+          "lon": 106.771782,
+          "score": 0.7275,
+          "score_parts": {
+            "match": 0.68,
+            "quality": 0.114,
+            "explore": 0.792
+          },
+          "reasons": ["Khớp “karaoke”", "Mở 10:00–24:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 10:00-24:00",
+          "website": "http://thesensekaraoke.com/",
+          "phone": "+84975080160"
+        },
+        {
+          "id": "karaoke-nexttop-436a32",
+          "name": "Karaoke nexttop",
+          "kind": "entertainment",
+          "category": "entertainment.karaoke",
+          "ward": "Phường Hòa Hưng",
+          "address": "399 Sư Vạn Hạnh, Phường Hòa Hưng, Thành phố Hồ Chí Minh",
+          "lat": 10.771976,
+          "lon": 106.669426,
+          "score": 0.7268,
+          "score_parts": {
+            "match": 0.68,
+            "quality": 0.114,
+            "explore": 0.78
+          },
+          "reasons": ["Khớp “karaoke”", "Mở 06:00–21:00 hằng ngày"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "Mo-Su 06:00-21:00",
+          "website": "http://karaokenexttop.com/",
+          "phone": "+842866763401"
+        },
+        {
+          "id": "karaoke-rome-cf26cf",
+          "name": "Karaoke Rome",
+          "kind": "entertainment",
+          "category": "entertainment.karaoke",
+          "ward": "Phường Phú Thọ",
+          "address": "Chung cư Phú Thọ - Khu B, Lê Đại Hành, Phường Phú Thọ, Thành phố Hồ Chí Minh",
+          "lat": 10.768801,
+          "lon": 106.652679,
+          "score": 0.7245,
+          "score_parts": {
+            "match": 0.68,
+            "quality": 0.114,
+            "explore": 0.742
+          },
+          "reasons": ["Khớp “karaoke”", "Mở cửa 24/7"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "24/7",
+          "website": null,
+          "phone": "+84933138138"
+        },
+        {
+          "id": "karaoke-queen-star-3279a4",
+          "name": "Karaoke Queen Star",
+          "kind": "entertainment",
+          "category": "entertainment.karaoke",
+          "ward": "Phường An Hội Đông",
+          "address": "378 Đ. Nguyễn Văn Lượng, Phường An Hội Đông, Thành phố Hồ Chí Minh",
+          "lat": 10.838736,
+          "lon": 106.66613,
+          "score": 0.7239,
+          "score_parts": {
+            "match": 0.68,
+            "quality": 0.114,
+            "explore": 0.731
+          },
+          "reasons": ["Khớp “karaoke”", "Mở cửa 24/7"],
+          "flags": ["no_price"],
+          "price_raw": null,
+          "opening_hours_raw": "24/7",
+          "website": null,
+          "phone": "+842862575388"
+        }
+      ],
+      "matched_keywords": [],
+      "note": null
+    }
+  ],
+  "warnings": [],
+  "meta": {
+    "retrieval_version": "retrieval-v1",
+    "interest_map_version": "interest_map.v2",
+    "keyword_map_version": "keyword_map.v1",
+    "data_version": "places_1000",
+    "latency_ms": 284
+  }
+}
