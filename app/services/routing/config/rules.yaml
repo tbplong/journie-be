@@ -1,0 +1,16 @@
+# Basic travel rules for POST /routing and /routing/days. All are soft: the planner breaks one
+# only when the traveller's places leave no other way, and then reports it in `warnings`.
+# Keys are taxonomy nodes: a top level (food) or a category (food.cafe).
+version: rules-v1
+# At most this many places under the node on one day.
+day_max:
+  food.cafe: 2
+# Counts under the node differ by at most 1 between days.
+day_spread:
+  - food.restaurant
+# No two consecutive stops both under the node.
+not_adjacent:
+  - food
+# Days count as balanced while their busy share (visits + travel over the day's length) differs
+# by at most this much; within it, shorter travel decides.
+balance_tolerance: 0.15

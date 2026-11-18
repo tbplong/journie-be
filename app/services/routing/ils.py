@@ -14,10 +14,11 @@ S, from ``seed``) until the time limit, so the 6 s budget is spent like the othe
 
 import random
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 from app.services.routing.instance import Instance
-from app.services.routing.validate import Tours
+from app.services.routing.validate import Tours, tour_errors
 
 MAX_NO_IMPROVE = 150  # paper's stopping rule, used here as the restart rule
 MIN_SHIFT = 1  # floored distances can make a detour 0 or negative; keep the ratio finite
@@ -71,7 +72,7 @@ def _best_position(inst: Instance, tour: _Tour, j: int) -> tuple[int, int] | Non
         else:
             nxt, room = 0, tour.end_max_shift
         slot = node.start_at(depart + travel[prev][j])
-        if slot is not None:
+        if slot is not None and not inst.clash(prev, j) and not inst.clash(j, nxt):
             start = slot[0]
             # travel to j + waiting at j + service at j + j->next, minus the arc it replaces
             shift = start - depart + node.service + travel[j][nxt] - travel[prev][nxt]
@@ -128,7 +129,14 @@ def _score(inst: Instance, tours: list[_Tour]) -> int:
     return sum(inst.nodes[n].score for tour in tours for n in tour.nodes)
 
 
-def solve(inst: Instance, time_limit_s: float, seed: int = 0) -> tuple[Tours, Trace]:
+def solve(
+    inst: Instance, time_limit_s: float, seed: int = 0, stall_s: float | None = None
+) -> tuple[Tours, Trace]:
+    """Stops at the time limit, when every node is visited (nothing left to gain), or, with
+    ``stall_s``, when the best score has not improved for that many seconds.
+
+    Best = highest score, then fewest no_adjacent clashes. Inserting never creates a clash, but
+    the shake can (removing B from A, B, C leaves A next to C)."""
     started = time.perf_counter()
     deadline = started + time_limit_s
     rng = random.Random(seed)
@@ -139,10 +147,14 @@ def solve(inst: Instance, time_limit_s: float, seed: int = 0) -> tuple[Tours, Tr
     unvisited = set(candidates)
     _insert(inst, tours, unvisited, rng, deadline)
     best_nodes, best_score = [list(t.nodes) for t in tours], _score(inst, tours)
+    best_clashes = inst.clashes(best_nodes)
     trace: Trace = [(time.perf_counter() - started, best_score)]
     max_r = max(1, len(candidates) // (3 * inst.m))
     s, r, no_improve = 1, 1, 0
-    while time.perf_counter() < deadline:
+    total = sum(inst.nodes[j].score for j in candidates)
+    while (now := time.perf_counter()) < deadline and (best_score < total or best_clashes):
+        if stall_s is not None and now - started - trace[-1][0] >= stall_s:
+            break
         _shake(inst, tours, unvisited, s, r)
         smallest = min(len(t.nodes) for t in tours)
         s += r
@@ -152,9 +164,10 @@ def solve(inst: Instance, time_limit_s: float, seed: int = 0) -> tuple[Tours, Tr
         if r >= max_r:
             r = 1
         _insert(inst, tours, unvisited, rng, deadline)
-        score = _score(inst, tours)
-        if score > best_score:
-            best_nodes, best_score = [list(t.nodes) for t in tours], score
+        score, nodes = _score(inst, tours), [list(t.nodes) for t in tours]
+        clashes = inst.clashes(nodes)
+        if (score, -clashes) > (best_score, -best_clashes):
+            best_nodes, best_score, best_clashes = nodes, score, clashes
             trace.append((time.perf_counter() - started, score))
             r, no_improve = 1, 0
         else:
@@ -166,3 +179,71 @@ def solve(inst: Instance, time_limit_s: float, seed: int = 0) -> tuple[Tours, Tr
             unvisited = candidates - {n for nodes in best_nodes for n in nodes}
             s, r, no_improve = rng.randint(1, max(1, min(len(n) for n in best_nodes))), 1, 0
     return best_nodes, trace
+
+
+def _built(inst: Instance, day: int, nodes: list[int]) -> _Tour | None:
+    """The tour of these visits on this day, or None when it is infeasible."""
+    if tour_errors(inst, nodes, day):
+        return None
+    tour = _Tour(day, nodes)
+    _refresh(inst, tour)
+    return tour
+
+
+def _placed(inst: Instance, tour: _Tour, j: int) -> _Tour | None:
+    found = _best_position(inst, tour, j)
+    if found is None:
+        return None
+    pos = found[1]
+    return _built(inst, tour.day, tour.nodes[:pos] + [j] + tour.nodes[pos:])
+
+
+def _moves(inst: Instance, plan: list[_Tour]) -> Iterator[dict[int, _Tour]]:
+    """Changed tours of each neighbour: one visit to its cheapest position in any tour (its own
+    included, which reorders), then two visits of different tours swapped."""
+    for a, tour in enumerate(plan):
+        for j in tour.nodes:
+            rest = _built(inst, a, [n for n in tour.nodes if n != j])
+            if rest is None:
+                continue
+            for b in range(len(plan)):
+                moved = _placed(inst, rest if a == b else plan[b], j)
+                if moved is not None:
+                    yield {a: moved} if a == b else {a: rest, b: moved}
+    for a in range(len(plan)):
+        for b in range(a + 1, len(plan)):
+            for i in plan[a].nodes:
+                rest_a = _built(inst, a, [n for n in plan[a].nodes if n != i])
+                if rest_a is None:
+                    continue
+                for j in plan[b].nodes:
+                    rest_b = _built(inst, b, [n for n in plan[b].nodes if n != j])
+                    if rest_b is None:
+                        continue
+                    new_a, new_b = _placed(inst, rest_a, j), _placed(inst, rest_b, i)
+                    if new_a is not None and new_b is not None:
+                        yield {a: new_a, b: new_b}
+
+
+def rebalance(
+    inst: Instance, tours: Tours, cost: Callable[[Tours], tuple], deadline: float
+) -> Tours:
+    """First-improvement local search on a feasible plan: take a move when ``cost`` of the whole
+    plan drops. Every changed tour is re-checked, so the plan stays feasible; no visit is ever
+    dropped. Stops at a local optimum or at the deadline (perf_counter time)."""
+    plan = [_built(inst, day, list(nodes)) for day, nodes in enumerate(tours)]
+    if any(tour is None for tour in plan):
+        raise ValueError("rebalance needs a feasible plan")
+    best = cost([t.nodes for t in plan])
+    improved = True
+    while improved:
+        improved = False
+        for changed in _moves(inst, plan):
+            if time.perf_counter() >= deadline:
+                return [t.nodes for t in plan]
+            trial = [changed.get(day, tour) for day, tour in enumerate(plan)]
+            value = cost([t.nodes for t in trial])
+            if value < best:
+                plan, best, improved = trial, value, True
+                break
+    return [t.nodes for t in plan]

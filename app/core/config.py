@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # True behind a transaction-mode PgBouncer (Azure built-in, port 6432).
     database_pgbouncer: bool = False
 
+    # Road distances for POST /routing. Unset or failing: straight-line estimate + a warning.
+    # Self-hosted in production; the public demo (router.project-osrm.org) is for dev only.
+    osrm_url: str | None = None
+    osrm_timeout_seconds: float = Field(default=3.0, gt=0)
+    routing_time_limit_seconds: float = Field(default=6.0, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:

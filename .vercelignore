@@ -5,3 +5,4 @@ scripts/
 tests/
 db/
 .venv/
+bench/

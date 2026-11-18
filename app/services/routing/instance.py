@@ -15,6 +15,7 @@ OR-Tools, which needs integers, sees the same numbers as every other solver.
 
 import math
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 
 TIME_UNIT = 100  # time values are stored as round(value * TIME_UNIT)
@@ -33,6 +34,7 @@ class Node:
     service: int
     score: int
     windows: tuple[Window, ...]  # sorted and disjoint
+    tag: str = ""  # group for Instance.no_adjacent ("" = none)
 
     def start_at(self, arrive: int) -> Window | None:
         """(start of service, close of that window) for an arrival time, or None if every
@@ -49,6 +51,9 @@ class Instance:
     nodes: tuple[Node, ...]  # node 0 is the start and end of every tour
     travel: tuple[tuple[int, ...], ...]  # travel[i][j], same unit as the node times
     tours: tuple[Window, ...]  # per tour (day): leave node 0 at begin, be back by end
+    # Soft rule: two consecutive visits must not share one of these tags. Solvers never create
+    # such a pair when inserting; it is not part of feasibility (validate ignores it).
+    no_adjacent: frozenset[str] = frozenset()
 
     @property
     def m(self) -> int:
@@ -57,6 +62,16 @@ class Instance:
     @property
     def customers(self) -> range:
         return range(1, len(self.nodes))
+
+    def clash(self, a: int, b: int) -> bool:
+        """Visiting node b right after node a breaks the no_adjacent rule."""
+        tag = self.nodes[a].tag
+        return bool(tag) and tag == self.nodes[b].tag and tag in self.no_adjacent
+
+    def clashes(self, tours: list[list[int]]) -> int:
+        if not self.no_adjacent:
+            return 0
+        return sum(self.clash(a, b) for tour in tours for a, b in pairwise(tour))
 
 
 def _units(value: str) -> int:

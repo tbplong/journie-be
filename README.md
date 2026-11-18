@@ -19,6 +19,9 @@ The development server runs at http://127.0.0.1:8000 with automatic reload.
 - Health check: `GET /health` returns `{"status": "ok"}`
 - Chat (travel-constraint extraction): `POST /chat` (see below; needs `GEMINI_API_KEY`)
 - POI retrieval: `POST /retrieval` (see below; needs `DATABASE_URL`)
+- Itinerary routing: `POST /routing/days` (picked places → suggested places per day, for the
+  traveller to review) and `POST /routing` (→ day-by-day timed stops); both need `DATABASE_URL`,
+  optional `OSRM_URL`, see [docs/osrm.md](docs/osrm.md)
 - Full API guide (Vietnamese: workflow, fields, errors, dependencies): [docs/API.md](docs/API.md)
 - Code walkthrough per endpoint (Vietnamese: every file, flow, mechanisms): [docs/endpoints/](docs/endpoints/README.md)
 

@@ -1,0 +1,26 @@
+# Expected visit duration per POI category (taxonomy top.sub), in minutes.
+# Placeholder values until journie-data provides measured durations: replace this file, no code
+# change needed. A category not listed uses `default`.
+version: visit-minutes-v0
+default: 40
+categories:
+  food.restaurant: 60
+  food.cafe: 45
+  attraction.museum: 90
+  attraction.landmark: 45
+  attraction.historic_site: 45
+  attraction.gallery: 60
+  attraction.theme_park: 180
+  culture_religion.church: 30
+  culture_religion.pagoda: 40
+  culture_religion.shrine: 30
+  culture_religion.temple: 40
+  nature.park: 45
+  nature.garden: 45
+  shopping.mall: 90
+  shopping.market: 60
+  shopping.department_store: 60
+  entertainment.nightlife: 90
+  entertainment.karaoke: 120
+  entertainment.cinema: 150
+  entertainment.performing_arts: 120

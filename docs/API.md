@@ -8,6 +8,7 @@ Mã nguồn: `app/`. Schema chính xác luôn có ở `/docs` (Swagger) và `/re
 - [Workflow](#workflow)
 - [POST /chat](#post-chat)
 - [POST /retrieval](#post-retrieval)
+- [POST /routing](#post-routing)
 - [Lỗi](#lỗi)
 - [Dependency](#dependency)
 - [Chạy và thử](#chạy-và-thử)
@@ -46,6 +47,8 @@ Hãy tưởng tượng một văn phòng du lịch có hai nhân viên:
 | `GET` | `/health` | Health check, trả `{"status": "ok"}` | — |
 | `POST` | `/chat` | Câu tự do → ràng buộc chuyến đi có cấu trúc (`Extraction`) | `GEMINI_API_KEY` |
 | `POST` | `/retrieval` | `Extraction` → địa điểm ở TP.HCM, xếp hạng theo sở thích | `DATABASE_URL` |
+| `POST` | `/routing/days` | Các địa điểm đã chọn → gợi ý mỗi ngày đi đâu (để người dùng duyệt) | `DATABASE_URL` (`OSRM_URL` tùy chọn) |
+| `POST` | `/routing` | Các địa điểm đã chọn → lịch trình theo ngày, có giờ và chặng đi | `DATABASE_URL` (`OSRM_URL` tùy chọn) |
 
 - Body và response là JSON (UTF-8). Lỗi ứng dụng dùng `application/problem+json`
   ([RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)), xem [Lỗi](#lỗi).
@@ -372,6 +375,123 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
 
 ---
 
+## POST /routing
+
+Xếp các địa điểm người dùng đã chọn thành lịch trình: mỗi ngày một tuyến, xuất phát từ vị trí
+của người dùng và quay về đó. Frontend đọc `days[].stops` từ trên xuống.
+
+Luồng hai bước (người dùng duyệt việc chia ngày trước):
+
+1. `POST /routing/days` → gợi ý mỗi ngày đi những nơi nào, kèm tải của từng ngày.
+2. Người dùng kéo thả giữa các ngày (chỉ vào ngày nằm trong `open_dates` của nơi đó). Muốn
+   máy gợi ý lại phần còn lại: gọi lại `/routing/days` với các nơi đã chỉnh trong `pins`.
+3. Khi đã duyệt: gửi `POST /routing` với **mọi** nơi trong `pins` → lịch trình có giờ, giữ đúng
+   cách chia của người dùng.
+
+Gọi thẳng `POST /routing` không có `pins` = để máy tự chia và xếp hết. Hướng dẫn chi tiết cho
+frontend (state kéo thả, hiển thị từng mã, trường hợp cần test): [routing-frontend.md](routing-frontend.md).
+
+### Request
+
+```json
+{
+  "places": [<PoiCard từ /retrieval>, ...],
+  "must_visit_ids": ["<id>"],
+  "start": {"lat": 10.7725, "lon": 106.698},
+  "start_at": "2026-11-20T09:00",
+  "end_at": "2026-11-22T18:00",
+  "day_start": "08:00",
+  "day_end": "21:00",
+  "pins": [{"id": "<id>", "date": "2026-11-21"}]
+}
+```
+
+| Field | Ý nghĩa |
+|---|---|
+| `places` | 1–50 card, id không trùng. Server chỉ đọc `id`; toạ độ, category, giờ mở cửa lấy từ DB. Card được trả lại nguyên như gửi lên |
+| `must_visit_ids` | Tùy chọn. Các id trong `places` được giữ trước khi không xếp đủ |
+| `start` | Vị trí xuất phát và quay về mỗi ngày |
+| `start_at`, `end_at` | Bắt đầu và kết thúc cả trip, tối đa 14 ngày. Không có múi giờ thì hiểu là giờ Việt Nam |
+| `day_start`, `day_end` | Giờ bắt đầu các ngày 2..n và giờ kết thúc mỗi ngày (mặc định 08:00, 21:00). Ngày đầu bắt đầu từ `start_at`; ngày cuối kết thúc ở mốc sớm hơn giữa `day_end` và giờ của `end_at` |
+| `pins` | Tùy chọn. Nơi người dùng đã cố định vào một ngày (ngày trong trip, id trong `places`, không trùng). Nơi không ghim do máy chia |
+
+### Response 200
+
+```json
+{
+  "days": [
+    {"date": "2026-11-20",
+     "stops": [{"poi": <PoiCard>, "arrive": "2026-11-20T09:12:00+07:00",
+                "start": "2026-11-20T10:00:00+07:00", "leave": "2026-11-20T11:00:00+07:00",
+                "wait_minutes": 48, "visit_minutes": 60,
+                "leg": {"mode": "ride", "distance_km": 3.9, "minutes": 12}}],
+     "return_leg": {"mode": "walk", "distance_km": 0.8, "minutes": 11}}
+  ],
+  "unscheduled": [{"poi": <PoiCard>, "reason": "closed_on_trip_days"}],
+  "warnings": ["travel_estimated", "hours_unknown:<id>", "day_max:food.cafe:2026-11-20"],
+  "meta": {"routing_version": "routing-v2", "visit_minutes_version": "visit-minutes-v0",
+           "rules_version": "rules-v1", "travel_source": "osrm", "latency_ms": 840}
+}
+```
+
+- `leg` là chặng từ điểm trước (hoặc từ `start` với điểm đầu tiên); `return_leg` là chặng về,
+  `null` với ngày không có điểm nào.
+- `unscheduled.reason`: `not_found` (id không có trong DB), `no_location` (không có toạ độ),
+  `closed_on_trip_days` (không có khung mở cửa nào đủ dài cho lượt tham quan trong các ngày
+  của trip), `closed_on_pinned_day` (như trên, nhưng ở ngày được ghim), `no_time` (không xếp
+  vừa cùng các điểm khác).
+- `warnings`: `travel_estimated` khi một phần hoặc toàn bộ thời gian di chuyển là ước lượng
+  đường chim bay × 1.3 (chưa cấu hình OSRM, OSRM lỗi, hoặc không có đường);
+  `hours_unknown:<id>` khi điểm đó không có giờ mở cửa và được coi là mở cả ngày;
+  `day_max:<nhóm>:<ngày>`, `day_spread:<nhóm>`, `not_adjacent:<nhóm>:<ngày>` khi một luật du
+  lịch không giữ được vì các nơi đã chọn không cho phép (ví dụ 6 quán cà phê trong 2 ngày).
+
+### POST /routing/days
+
+Cùng request và cùng bộ giải với `POST /routing`, nhưng trả về danh sách nơi theo ngày để
+người dùng duyệt:
+
+```json
+{
+  "days": [{"date": "2026-11-21", "places": [<PoiCard>, ...],
+            "busy_minutes": 391, "capacity_minutes": 780}],
+  "unscheduled": [{"poi": <PoiCard>, "reason": "no_time"}],
+  "open_dates": {"<id>": ["2026-11-21", "2026-11-22"]},
+  "warnings": ["day_max:food.cafe:2026-11-21"],
+  "meta": {...}
+}
+```
+
+- `places` theo thứ tự đi; `busy_minutes` = tham quan + di chuyển (từ `start` và về lại),
+  `capacity_minutes` = độ dài ngày. Hai số này lấy từ lịch thật, nên khớp với `POST /routing`.
+- `open_dates`: các ngày mỗi nơi mở cửa đủ lâu. Frontend dùng để chặn kéo một nơi vào ngày nó
+  đóng cửa mà không cần gọi API.
+
+### Kết quả được tính thế nào
+
+- Bài toán TOPTW, giải bằng ILS (`app/services/routing/ils.py`); so sánh với OR-Tools nằm ở
+  `bench/routing/`. Sau ILS là một bước tìm kiếm cục bộ (chuyển một nơi sang chỗ khác hoặc
+  ngày khác, đổi chỗ hai nơi giữa hai ngày) để cân bằng. Hai lịch được so theo thứ tự:
+  1. xếp được nhiều nơi nhất (`must_visit_ids` trước);
+  2. ít vi phạm luật du lịch nhất (`app/services/routing/config/rules.yaml`: tối đa 2 quán cà
+     phê mỗi ngày, số nhà hàng giữa các ngày chênh không quá 1, hai nơi ăn uống không liền
+     nhau). Luật là mềm: chỉ bị phá khi không còn cách nào, và khi đó có trong `warnings`;
+  3. cân bằng: tỉ lệ bận (tham quan + di chuyển so với độ dài ngày) giữa các ngày lệch không
+     quá 15 điểm %; trong ngưỡng đó coi như cân bằng;
+  4. ít di chuyển nhất (các ngày gọn theo khu).
+- Nơi trong `pins` chỉ được xếp vào đúng ngày của nó, kể cả khi làm lệch tải.
+- Khung giờ mỗi điểm = giờ mở cửa trong từng ngày của trip, cắt theo giờ của ngày đó; lượt
+  tham quan phải xong trước giờ đóng cửa. Giờ qua nửa đêm được hỗ trợ.
+- Thời gian tham quan theo category: `app/services/routing/config/visit_minutes.yaml` (giá trị
+  tạm, chờ số liệu thật).
+- Di chuyển: một request OSRM `table` lấy quãng đường đường bộ N×N. Dưới 1 km đi bộ
+  4.5 km/h, còn lại đi xe 20 km/h.
+- Solver dừng khi đã xếp được mọi điểm, khi lời giải không cải thiện trong 1 giây, hoặc khi hết
+  `ROUTING_TIME_LIMIT_SECONDS`. Cùng request cho cùng lịch trình (seed cố định). Lời giải được
+  kiểm tra lại bằng validator độc lập trước khi trả về.
+
+---
+
 ## Lỗi
 
 Lỗi ứng dụng có dạng `application/problem+json`:
@@ -390,7 +510,7 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 
 | Endpoint | HTTP | `type` | Khi nào | Nên làm gì |
 |---|---|---|---|---|
-| cả hai | 422 | (dạng mặc định của FastAPI: `{"detail": [...]}`) | Body sai kiểu, thiếu field, vượt giới hạn | Sửa request, không retry |
+| mọi endpoint POST | 422 | (dạng mặc định của FastAPI: `{"detail": [...]}`) | Body sai kiểu, thiếu field, vượt giới hạn | Sửa request, không retry |
 | `/chat` | 502 | `/problems/invalid-llm-output` | Gemini trả JSON hỏng, bị cắt, hoặc bị chặn bởi bộ lọc an toàn | Có thể retry một lần |
 | `/chat` | 502 | `/problems/llm-upstream-error` | Lỗi mạng hoặc HTTP từ Gemini | Retry sau |
 | `/chat` | 503 | `/problems/llm-not-configured` | Server thiếu `GEMINI_API_KEY` | Báo người vận hành |
@@ -398,6 +518,8 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | `/chat` | 504 | `/problems/llm-timeout` | Gemini không trả lời kịp | Retry sau |
 | `/retrieval` | 503 | `/problems/retrieval-not-configured` | Server thiếu `DATABASE_URL` | Báo người vận hành |
 | `/retrieval` | 503 | `/problems/retrieval-db-unavailable` | Không kết nối được DB, hết connection, hoặc truy vấn quá thời gian; có `Retry-After: 5` | Chờ rồi retry |
+| `/routing`, `/routing/days` | 503 | `/problems/retrieval-not-configured`, `/problems/retrieval-db-unavailable` | Như `/retrieval` (routing tra giờ mở cửa trong cùng DB) | Như trên |
+| `/routing`, `/routing/days` | 500 | `/problems/routing-invalid-plan` | Solver trả lịch trình vi phạm giờ mở cửa hoặc giờ kết thúc ngày (lỗi code, không nên xảy ra) | Báo người vận hành |
 
 ---
 
@@ -409,6 +531,7 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 |---|---|---|
 | Google AI Studio (Gemini API), model `gemini-3.5-flash-lite` | `/chat` | Gọi `generateContent` với `responseJsonSchema`, temperature 0. Mỗi request tốn tiền/quota |
 | PostgreSQL (Azure Database for PostgreSQL) với extension `pg_trgm` | `/retrieval` | Bảng `pois` (`db/schema.sql`). Trên Azure phải thêm `pg_trgm` vào `azure.extensions` trước |
+| OSRM (tự host, hoặc server demo `router.project-osrm.org` khi dev) | `/routing` | Một request `table` mỗi lần gọi. Không có hoặc lỗi thì dùng ước lượng và cảnh báo. Server demo cấm dùng cho production. Cách tự host: [docs/osrm.md](osrm.md) |
 | Vercel (serverless, region `sin1`) | Deploy | Đặt Postgres ở Đông Nam Á cho gần. `data/`, `eval/`, `scripts/`, `tests/`, `db/` không được đóng gói (`.vercelignore`) |
 
 ### Thư viện Python (`pyproject.toml`, Python ≥ 3.13, quản lý bằng `uv`)
@@ -439,6 +562,9 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | `DATABASE_POOL_MAX_SIZE` | `3` | Số connection tối đa mỗi instance |
 | `DATABASE_TIMEOUT_SECONDS` | `10` | Thời gian chờ connection và giới hạn mỗi truy vấn |
 | `DATABASE_PGBOUNCER` | `false` | `true` khi đi qua PgBouncer của Azure (port 6432) |
+| `OSRM_URL` | — | Server OSRM cho `/routing`, ví dụ `http://localhost:5000`. Không đặt: ước lượng đường chim bay |
+| `OSRM_TIMEOUT_SECONDS` | `3` | Quá thời gian thì dùng ước lượng |
+| `ROUTING_TIME_LIMIT_SECONDS` | `6` | Thời gian tối đa solver chạy mỗi request |
 
 ### File cấu hình và dữ liệu
 
@@ -449,6 +575,8 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | `app/services/retrieval/config/interest_map.v2.yaml` | Sở thích → nhánh taxonomy, section mặc định |
 | `app/services/retrieval/config/keyword_map.v1.yaml` | Từ khoá → lọc theo cột (Michelin, chay, món ăn...) |
 | `app/services/retrieval/config/poi_overrides.csv` | Sửa tay category/kind sai theo id (hiện trống) |
+| `app/services/routing/config/visit_minutes.yaml` | Thời gian tham quan theo category (giá trị tạm) |
+| `app/services/routing/config/rules.yaml` | Luật du lịch (cà phê mỗi ngày, rải nhà hàng, không ăn liền nhau) và ngưỡng cân bằng 15% |
 | `db/schema.sql` | Bảng `pois` và index; chạy lại an toàn |
 | `data/places_1000.parquet`, `data/taxonomy.v1.yaml` | Dữ liệu demo 1000 địa điểm và taxonomy (không deploy) |
 
@@ -507,3 +635,7 @@ uv run python eval/run_eval.py --schema retrieval_test
   tới 5 phút.
 - `/retrieval` tin vào `extraction` client gửi lên; nó chỉ kiểm tra kiểu và giới hạn kích
   thước, không kiểm tra extraction có thật sự đến từ `/chat` hay không.
+- `/routing` tốn tới `ROUTING_TIME_LIMIT_SECONDS` CPU mỗi request (thường dưới 1 giây khi mọi
+  điểm xếp vừa) và chưa có rate limit. Thời gian tham quan là giá trị tạm. Quãng đường lấy
+  theo profile ô tô của OSRM nên chặng đi bộ có thể dài hơn thực tế ở đường một chiều; chưa
+  tính kẹt xe ngoài tốc độ trung bình 20 km/h.
