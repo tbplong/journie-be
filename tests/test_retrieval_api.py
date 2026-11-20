@@ -42,7 +42,7 @@ def test_statuses_that_need_no_query(client: TestClient) -> None:
 
     empty = client.post("/retrieval", json={"extraction": {**BASE, "destination": None}}).json()
     assert empty["status"] == "empty_extraction"
-    assert empty["meta"]["retrieval_version"] == "retrieval-v1"
+    assert empty["meta"]["retrieval_version"] == "retrieval-v2"
 
 
 def test_request_validation(client: TestClient) -> None:
@@ -91,7 +91,7 @@ class FakePool:
 def test_database_error_is_a_retryable_problem(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def timed_out(conn: object, body: object) -> None:
+    async def timed_out(conn: object, body: object, embed: object = None) -> None:
         raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
 
     monkeypatch.setattr("app.api.routes.retrieval.retrieve", timed_out)

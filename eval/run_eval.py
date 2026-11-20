@@ -1,13 +1,15 @@
 """Retrieval eval on hand-written gold extractions (spec section 8).
 
     uv run python eval/run_eval.py [--schema retrieval_test] [--cases eval/queries.jsonl] [-v]
+        [--no-semantic]
 
 Gold extractions are written by hand, so failures here are retrieval failures, not LLM ones.
 Reports name-resolution accuracy, Precision@5 and nDCG@5 per section, the share of evaluated
 sections with a relevant item in the top 5, and must_not_contain violations (target: 0; the
 exit code is 1 when any occur). Diversity per non-empty section's first page (top 6): the
 share of famous places (tier A or Michelin) and the number of distinct wards. The seed is
-fixed, so runs are comparable.
+fixed, so runs are comparable. Free-text interests are embedded with Gemini (one call per such
+case, GEMINI_API_KEY then GEMINI_API_KEY2); --no-semantic runs the full-text-only baseline.
 """
 
 import argparse
@@ -18,6 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 from psycopg import AsyncConnection
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +29,9 @@ sys.path.insert(0, str(ROOT))
 from app.core.config import Settings
 from app.schemas.extraction import Extraction
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
+from app.services.gemini import embed_all
 from app.services.retrieval import candidates, names
+from app.services.retrieval.semantic import Embed
 from app.services.retrieval.service import retrieve
 
 BASE: dict[str, Any] = {
@@ -60,13 +65,15 @@ def ndcg(ranked: list[str], relevant: dict[str, int]) -> float:
     return dcg / idcg if idcg else 0.0
 
 
-async def run_case(conn: AsyncConnection, case: dict[str, Any]) -> dict[str, Any]:
+async def run_case(
+    conn: AsyncConnection, case: dict[str, Any], embed: Embed | None = None
+) -> dict[str, Any]:
     extraction = Extraction.model_validate({**BASE, **case["extraction"]})
     # Every item of every section, so must_not_contain sees past the first page.
     request = RetrievalRequest.model_construct(
         extraction=extraction, selected_ids=[], section=None, offset=0, limit=10_000, seed=SEED
     )
-    response: RetrievalResponse = await retrieve(conn, request)
+    response: RetrievalResponse = await retrieve(conn, request, embed)
     errors: list[str] = []
     result: dict[str, Any] = {"id": case["id"], "sections": {}, "names": []}
 
@@ -153,6 +160,7 @@ async def main() -> int:
     parser.add_argument("--schema", default="retrieval_test")
     parser.add_argument("--cases", type=Path, default=ROOT / "eval" / "queries.jsonl")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print each section's top 5")
+    parser.add_argument("--no-semantic", action="store_true", help="Full-text-only baseline")
     args = parser.parse_args()
     settings = Settings()
     if settings.database_url is None:
@@ -164,8 +172,14 @@ async def main() -> int:
         autocommit=True,
         options=f"-c search_path={args.schema},public",
     )
-    async with conn:
-        results = [await run_case(conn, case) for case in cases]
+    keys = [k.get_secret_value() for k in (settings.gemini_api_key, settings.gemini_api_key2) if k]
+    async with conn, httpx.AsyncClient() as http:
+
+        async def embed(texts: list[str]) -> list[list[float]]:
+            return await embed_all(http, settings, texts, keys)
+
+        use = None if args.no_semantic or not keys else embed
+        results = [await run_case(conn, case, use) for case in cases]
 
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     for result in results:

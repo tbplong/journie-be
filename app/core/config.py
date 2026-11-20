@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     gemini_temperature: float = Field(default=0.0, ge=0, le=2)
     gemini_max_output_tokens: int = Field(default=4096, ge=1)
     gemini_timeout_seconds: float = Field(default=60.0, gt=0)
+    # A second AI Studio account (free tier: separate daily quota). Embedding calls fall back to
+    # the other key on HTTP 429; /chat uses gemini_api_key only.
+    gemini_api_key2: SecretStr | None = None
+    gemini_embedding_model: str = "gemini-embedding-2"
+    gemini_embedding_timeout_seconds: float = Field(default=5.0, gt=0)
 
     # POI retrieval store (Azure Database for PostgreSQL). Unset: POST /retrieval returns 503.
     database_url: SecretStr | None = None

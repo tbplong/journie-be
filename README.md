@@ -91,8 +91,11 @@ Postgres full-text search with no word lists.
 Code lives in `app/services/retrieval/`. The pure steps (`hours`, `names.classify`, `interests`,
 `scoring`, `sections`, `ingest`) are tested without a database.
 
-Data setup (needs `DATABASE_URL`; on Azure, add `pg_trgm` to the `azure.extensions`
-allow-list first):
+Data setup (needs `DATABASE_URL`; on Azure, add `pg_trgm` and `vector` to the
+`azure.extensions` allow-list first). The importer also embeds every changed description with
+Gemini for semantic search (`GEMINI_API_KEY2`, falling back to `GEMINI_API_KEY`; `--no-embed`
+skips it). On the free tier each description is one request: a full first run takes about
+5 minutes and ~925 of the 2 x 1000 daily requests:
 
 ```powershell
 uv run --group data python scripts/coverage_report.py data/places_1000.parquet   # check data issues

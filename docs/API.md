@@ -290,7 +290,7 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
   ],
   "warnings": [],
   "meta": {
-    "retrieval_version": "retrieval-v1",
+    "retrieval_version": "retrieval-v2",
     "interest_map_version": "interest_map.v2",
     "keyword_map_version": "keyword_map.v1",
     "data_version": "places_1000",
@@ -354,6 +354,15 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
   Nhật dùng cột có cấu trúc (`config/keyword_map.v1.yaml`). Từ khác ("phở") dùng full-text
   search. Không có sở thích nào → mặc định `food` và `culture`. `beach` chưa có dữ liệu ở
   TP.HCM nên có warning.
+- **Sở thích tự do** (giá trị trong `interests` hoặc constraint `other` không khớp nhóm hay
+  từ khoá nào, ví dụ "quán yên tĩnh để làm việc", "chỗ có view đẹp để ngắm hoàng hôn"): ngoài
+  full-text còn được tìm **theo nghĩa**. Câu được embed bằng Gemini (`gemini-embedding-2`, 768
+  chiều) và so với embedding của tên + mô tả từng nơi (pgvector, cosine). Giữ tối đa 30 nơi có
+  độ tương đồng ≥ 0.65, xếp theo độ gần; reason là "Gợi ý theo mô tả". Câu có phủ định ("không
+  quá du lịch", "tránh chỗ ồn ào") không tìm theo nghĩa, vì embedding coi chúng gần với điều bị
+  phủ định. Gemini lỗi hoặc hết quota → chỉ full-text, kèm warning "Tạm thời không tìm được
+  theo ý nghĩa…". Mỗi request có sở thích tự do tốn 1 lần gọi embed (cache trong process), cộng
+  khoảng 0.7 giây khi chưa có trong cache.
 - **Giờ mở cửa**: chỉ áp dụng khi extraction có ngày hoặc giờ. Một nơi chỉ bị **loại** khi giờ
   đáng tin (confidence medium/high, không mâu thuẫn) nói là đóng; trường hợp nghi ngờ thì giữ
   lại và gắn flag.
@@ -429,7 +438,7 @@ frontend (state kéo thả, hiển thị từng mã, trường hợp cần test)
   ],
   "unscheduled": [{"poi": <PoiCard>, "reason": "closed_on_trip_days"}],
   "warnings": ["travel_estimated", "hours_unknown:<id>", "day_max:food.cafe:2026-11-20"],
-  "meta": {"routing_version": "routing-v2", "visit_minutes_version": "visit-minutes-v0",
+  "meta": {"routing_version": "routing-v2", "visit_minutes_version": "visit-minutes-v1",
            "rules_version": "rules-v1", "travel_source": "osrm", "latency_ms": 840}
 }
 ```
@@ -530,7 +539,8 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | Dịch vụ | Dùng cho | Ghi chú |
 |---|---|---|
 | Google AI Studio (Gemini API), model `gemini-3.5-flash-lite` | `/chat` | Gọi `generateContent` với `responseJsonSchema`, temperature 0. Mỗi request tốn tiền/quota |
-| PostgreSQL (Azure Database for PostgreSQL) với extension `pg_trgm` | `/retrieval` | Bảng `pois` (`db/schema.sql`). Trên Azure phải thêm `pg_trgm` vào `azure.extensions` trước |
+| Google AI Studio, model `gemini-embedding-2` | `/retrieval` (sở thích tự do), `scripts/import_parquet.py` | `batchEmbedContents`, 768 chiều. Free tier: 100 request/phút và khoảng 1000/ngày mỗi key, **mỗi câu trong một lô tính là một request**. API dùng `GEMINI_API_KEY` trước, script import dùng `GEMINI_API_KEY2` trước; key bị 429 thì chuyển sang key kia |
+| PostgreSQL (Azure Database for PostgreSQL) với extension `pg_trgm` và `vector` (pgvector) | `/retrieval` | Bảng `pois` (`db/schema.sql`). Trên Azure phải thêm `pg_trgm` và `vector` vào `azure.extensions` trước |
 | OSRM (tự host, hoặc server demo `router.project-osrm.org` khi dev) | `/routing` | Một request `table` mỗi lần gọi. Không có hoặc lỗi thì dùng ước lượng và cảnh báo. Server demo cấm dùng cho production. Cách tự host: [docs/osrm.md](osrm.md) |
 | Vercel (serverless, region `sin1`) | Deploy | Đặt Postgres ở Đông Nam Á cho gần. `data/`, `eval/`, `scripts/`, `tests/`, `db/` không được đóng gói (`.vercelignore`) |
 
@@ -557,6 +567,9 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | `GEMINI_TEMPERATURE` | `0.0` | |
 | `GEMINI_MAX_OUTPUT_TOKENS` | `4096` | |
 | `GEMINI_TIMEOUT_SECONDS` | `60` | |
+| `GEMINI_API_KEY2` | — | Key của account thứ hai (quota free tier riêng), chỉ dùng cho embedding |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Đổi model thì phải embed lại toàn bộ (`import_parquet.py` tự làm vì hash đổi) |
+| `GEMINI_EMBEDDING_TIMEOUT_SECONDS` | `5` | Quá thời gian thì `/retrieval` chỉ dùng full-text |
 | `DATABASE_URL` | — | Bắt buộc cho `/retrieval`, ví dụ `postgresql://user:pass@host:5432/db?sslmode=require` |
 | `DATABASE_SCHEMA` | `public` | Schema chứa bảng `pois` |
 | `DATABASE_POOL_MAX_SIZE` | `3` | Số connection tối đa mỗi instance |

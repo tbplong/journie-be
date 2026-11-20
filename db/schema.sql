@@ -4,9 +4,10 @@
 --   name_keys                           norm(): accents folded (fallback, trigram fuzzy names)
 --   name_keys_vi / name_text            fold_case(): accents kept
 --   name_lex / search_lex               lexeme_vector(): accent-aware full-text (see text.py)
--- On Azure Flexible Server, pg_trgm must be in the `azure.extensions` allow-list first.
+-- On Azure Flexible Server, pg_trgm and vector must be in the `azure.extensions` allow-list first.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
 CREATE TABLE IF NOT EXISTS pois (
     id                    text PRIMARY KEY,
@@ -71,3 +72,10 @@ CREATE INDEX IF NOT EXISTS pois_search_lex_idx ON pois USING gin (search_lex);
 -- A section node is either a whole category (food.cafe) or a top level (food).
 CREATE INDEX IF NOT EXISTS pois_category_idx ON pois (category);
 CREATE INDEX IF NOT EXISTS pois_category_top_idx ON pois (category_top);
+
+-- Semantic search (app/services/retrieval/semantic.py): Gemini embedding of name + description.
+-- 768 = app.services.gemini.EMBEDDING_DIMENSIONS. embedding_hash = model + size + text, so an
+-- import only re-embeds changed rows. No ANN index: an exact scan with the eligibility filter
+-- takes milliseconds at this size and never drops filtered matches; past ~50k rows add HNSW.
+ALTER TABLE pois ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE pois ADD COLUMN IF NOT EXISTS embedding_hash text;

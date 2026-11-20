@@ -25,7 +25,10 @@ ADDED_WEIGHTS = {"quality": 0.0, "explore": 0.06}
 PREFERRED_BONUS = 0.25
 
 # How well a POI matches a request, by the type of evidence.
-MATCH = {"structured": 1.0, "name": 0.8, "category": 0.6, "text": 0.5}
+MATCH = {"structured": 1.0, "name": 0.8, "category": 0.6, "text": 0.5, "semantic": 0.5}
+# A semantic hit at the similarity threshold keeps this share of MATCH["semantic"]; the closest
+# description keeps all of it, so semantic sections are ordered by how close the text is.
+SEMANTIC_FLOOR = 0.5
 STRENGTH = {"include": 1.0, "prefer": 0.85}
 TIER = {"A": 1.0, "B": 0.6, "C": 0.3}
 MICHELIN = {"star": 1.0, "bib_gourmand": 0.8, "selected": 0.5}
@@ -38,7 +41,7 @@ MICHELIN_LABELS = {
 TIME_FIT_UNKNOWN = 0.3
 PROXIMITY_SCALE_KM = 2.0
 
-Evidence = Literal["structured", "name", "category", "text"]
+Evidence = Literal["structured", "name", "category", "text", "semantic"]
 
 
 @dataclass(frozen=True)
@@ -48,10 +51,17 @@ class Hit:
     evidence: Evidence
     strength: Literal["include", "prefer"]
     raw: str | None = None  # set for keyword hits, shown in the reason
+    closeness: float = 1.0  # semantic hits: 0 at the similarity threshold, 1 at identical
 
 
 def match_score(hits: list[Hit]) -> float:
-    return max((MATCH[hit.evidence] * STRENGTH[hit.strength] for hit in hits), default=0.0)
+    return max((_match(hit) * STRENGTH[hit.strength] for hit in hits), default=0.0)
+
+
+def _match(hit: Hit) -> float:
+    if hit.evidence == "semantic":
+        return MATCH["semantic"] * (SEMANTIC_FLOOR + (1 - SEMANTIC_FLOOR) * hit.closeness)
+    return MATCH[hit.evidence]
 
 
 def quality_score(poi: Poi) -> float:
@@ -114,6 +124,8 @@ def reasons(poi: Poi, hits: list[Hit], check: HoursCheck | None) -> list[str]:
             continue
         if hit.evidence == "text":
             out.append(f"Mô tả có “{hit.raw}”")
+        elif hit.evidence == "semantic":
+            out.append("Gợi ý theo mô tả")  # no stored word to quote: the match is by meaning
         elif hit.evidence in ("name", "structured"):
             out.append(f"Khớp “{hit.raw}”")
     cuisine = next((c for c in poi.cuisine if c in KEYWORD_MAP.cuisine_labels), None)

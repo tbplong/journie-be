@@ -307,3 +307,9 @@ def test_nothing_to_schedule_still_answers(monkeypatch: pytest.MonkeyPatch) -> N
     assert [day.stops for day in result.days] == [[], []]
     assert [(u.poi.id, u.reason) for u in result.unscheduled] == [("gone", "not_found")]
     assert result.meta.travel_source == "estimated"  # no OSRM configured
+
+
+def test_visit_minutes_use_taxonomy_categories() -> None:
+    from tests.test_retrieval_taxonomy import TAXONOMY
+
+    assert set(service.VISIT_MINUTES.by_category) <= TAXONOMY.categories

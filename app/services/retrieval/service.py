@@ -2,6 +2,7 @@
 
 import hashlib
 import time
+from typing import Any
 
 from psycopg import AsyncConnection
 
@@ -16,14 +17,23 @@ from app.schemas.retrieval import (
     RetrievalResponse,
     Section,
 )
-from app.services.retrieval import candidates, names
+from app.services.gemini import GeminiError
+from app.services.retrieval import candidates, names, semantic
 from app.services.retrieval.config import INTEREST_MAP, KEYWORD_MAP
 from app.services.retrieval.hours import TripWindow, check_hours, decide, trip_window
-from app.services.retrieval.interests import plan_interests
+from app.services.retrieval.interests import InterestRequest, plan_interests
 from app.services.retrieval.poi import Poi
-from app.services.retrieval.sections import ANY_TIME, Scored, SectionResult, assemble, to_card
+from app.services.retrieval.sections import (
+    ANY_TIME,
+    Closeness,
+    KeywordHits,
+    Scored,
+    SectionResult,
+    assemble,
+    to_card,
+)
 
-RETRIEVAL_VERSION = "retrieval-v1"
+RETRIEVAL_VERSION = "retrieval-v2"  # v2: semantic search for free-text interests
 SUPPORTED_DESTINATION = "Ho Chi Minh City"
 
 
@@ -100,7 +110,40 @@ def _page(result: SectionResult, offset: int, limit: int) -> Section:
     )
 
 
-async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> RetrievalResponse:
+async def _semantic(
+    conn: AsyncConnection,
+    requests: list[InterestRequest],
+    params: dict[str, Any],
+    embed: semantic.Embed | None,
+    hits: KeywordHits,
+    warnings: list[str],
+) -> Closeness:
+    """Add semantic hits to the free-text requests' hits (a word match keeps its evidence) and
+    return how close each one is. One embedding call for all of them (cached)."""
+    wanted = [req for req in requests if req.text is not None and not semantic.negated(req.raw)]
+    if not wanted or embed is None:
+        return {}
+    queries = {req.key: semantic.QUERY_FORMAT.format(req.raw) for req in wanted}
+    try:
+        vectors = await semantic.QUERY_CACHE.get_many(list(queries.values()), embed)
+    except GeminiError:
+        warnings.append("Tạm thời không tìm được theo ý nghĩa; sở thích tự do chỉ khớp theo từ")
+        return {}
+    closeness: Closeness = {}
+    span = 1 - semantic.SIMILARITY_MIN
+    for key, query in queries.items():
+        # One query per free-text interest (a handful per request), not per place.
+        found = await semantic.semantic_hits(conn, vectors[query], params)
+        for poi_id in found:
+            hits[key].setdefault(poi_id, "semantic")
+        closeness[key] = {i: (sim - semantic.SIMILARITY_MIN) / span for i, sim in found.items()}
+    return closeness
+
+
+async def retrieve(
+    conn: AsyncConnection, request: RetrievalRequest, embed: semantic.Embed | None = None
+) -> RetrievalResponse:
+    """``embed`` turns texts into vectors for semantic search; None skips that search."""
     started = time.perf_counter()
     extraction = request.extraction
     if is_empty(extraction):
@@ -164,6 +207,7 @@ async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> Retrieva
         for req in plan.requests
         if req.group is None
     }
+    closeness = await _semantic(conn, plan.requests, params, embed, hits, warnings)
     group_keys = [req.group for req in plan.requests if req.group] or list(INTEREST_MAP.defaults)
     nodes = {node for key in group_keys for node in INTEREST_MAP.groups[key].nodes}
     hit_ids = {poi_id for found in hits.values() for poi_id in found}
@@ -186,6 +230,7 @@ async def retrieve(conn: AsyncConnection, request: RetrievalRequest) -> Retrieva
         frozenset(pinned) | frozenset(request.selected_ids),
         anchors,
         request_seed(request),
+        closeness,
     )
     if request.section is not None:
         results = [result for result in results if result.spec.key == request.section]

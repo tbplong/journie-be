@@ -50,10 +50,11 @@ BROAD_CUISINES = frozenset({"vietnamese", "diner", "asian", "regional"})
 # tune with the eval set.
 HOME_SHARE = 0.6
 WEAK_WEIGHT = 0.3
-WEAK_EVIDENCE = frozenset({"text"})
+WEAK_EVIDENCE = frozenset({"text", "semantic"})
 
 ANY_TIME = TripWindow(None, None, None)
 KeywordHits = dict[str, dict[str, Evidence]]  # request key -> poi id -> evidence
+Closeness = dict[str, dict[str, float]]  # request key -> poi id -> semantic closeness (0..1)
 
 
 @dataclass
@@ -222,22 +223,25 @@ def build_specs(
 
 
 def _hits_for(
-    spec: SectionSpec, poi: Poi, hits: KeywordHits
+    spec: SectionSpec, poi: Poi, hits: KeywordHits, closeness: Closeness
 ) -> list[Hit] | None:
-    if spec.group is None:
-        assert spec.request is not None
-        evidence = hits.get(spec.request.key, {}).get(poi.id)
+    def hit(request: InterestRequest) -> Hit | None:
+        evidence = hits.get(request.key, {}).get(poi.id)
         if evidence is None:
             return None
-        return [Hit(evidence, spec.request.strength, spec.request.raw)]
+        close = closeness.get(request.key, {}).get(poi.id, 1.0)
+        return Hit(evidence, request.strength, request.raw, close)
+
+    if spec.group is None:
+        assert spec.request is not None
+        found = hit(spec.request)
+        return None if found is None else [found]
     if not accepts(spec.group, poi):
         return None
-    found = [Hit("category", spec.request.strength if spec.request else "prefer")]
-    for request in spec.merged:
-        evidence = hits.get(request.key, {}).get(poi.id)
-        if evidence is not None:
-            found.append(Hit(evidence, request.strength, request.raw))
-    return found
+    return [
+        Hit("category", spec.request.strength if spec.request else "prefer"),
+        *filter(None, map(hit, spec.merged)),
+    ]
 
 
 def _primary_cuisine(poi: Poi) -> str | None:
@@ -299,6 +303,7 @@ class _Context:
     window: TripWindow
     anchors: list[tuple[float, float]]
     seed: int
+    closeness: Closeness
 
     def hours(self, poi: Poi) -> tuple[HoursCheck, list[str]] | None:
         """Hours check and flags; None when trusted hours say the POI is closed."""
@@ -341,7 +346,7 @@ def _best_placement(
         return None
     best: tuple[tuple[float, tuple[float, int], bool, int], Scored] | None = None
     for spec in specs:
-        found = _hits_for(spec, poi, ctx.hits)
+        found = _hits_for(spec, poi, ctx.hits, ctx.closeness)
         if found is None:
             continue
         scored = ctx.score(poi, spec.key, found, hours, preferred)
@@ -377,15 +382,17 @@ def assemble(
     pinned_ids: frozenset[str] = frozenset(),
     anchors: list[tuple[float, float]] | None = None,
     seed: int = 0,
+    closeness: Closeness | None = None,
 ) -> tuple[list[SectionResult], list[str]]:
     """Score every candidate, assign it to one section and order each section. ``seed`` picks
-    the order of equally relevant places (scoring.explore)."""
+    the order of equally relevant places (scoring.explore); ``closeness`` grades semantic
+    hits."""
     homes: dict[str, str | None] = {}
     pruned: KeywordHits = {}
     for key, found in hits.items():
         homes[key], pruned[key] = prune_hits(found, pois)
     specs, warnings = build_specs(plan, pruned, homes)
-    ctx = _Context(pruned, window, anchors or [], seed)
+    ctx = _Context(pruned, window, anchors or [], seed, closeness or {})
     members: dict[str, list[Scored]] = {spec.key: [] for spec in specs}
     for poi in pois.values():
         if poi.id in pinned_ids or avoided(poi, plan.avoid):

@@ -6,8 +6,11 @@ from fastapi import APIRouter, Depends, Request, status
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
+from app.core.config import Settings, get_settings
 from app.core.errors import ProblemError, problem_doc
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
+from app.services.gemini import embed_all
+from app.services.retrieval.semantic import Embed
 from app.services.retrieval.service import retrieve
 
 router = APIRouter(prefix="/retrieval", tags=["retrieval"])
@@ -39,6 +42,22 @@ async def get_connection(request: Request) -> AsyncIterator[AsyncConnection]:
         raise _unavailable(exc) from exc
 
 
+def get_embedder(
+    request: Request, settings: Annotated[Settings, Depends(get_settings)]
+) -> Embed | None:
+    """Query embeddings for semantic search: GEMINI_API_KEY first, GEMINI_API_KEY2 on 429
+    (the import script uses them the other way round). None when no key is set."""
+    keys = [k.get_secret_value() for k in (settings.gemini_api_key, settings.gemini_api_key2) if k]
+    if not keys:
+        return None
+    http = request.app.state.http_client
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        return await embed_all(http, settings, texts, keys)
+
+    return embed
+
+
 @router.post(
     "",
     status_code=status.HTTP_200_OK,
@@ -53,12 +72,15 @@ async def get_connection(request: Request) -> AsyncIterator[AsyncConnection]:
 async def retrieval(
     body: RetrievalRequest,
     conn: Annotated[AsyncConnection, Depends(get_connection)],
+    embed: Annotated[Embed | None, Depends(get_embedder)],
 ) -> RetrievalResponse:
     """Find Ho Chi Minh City places for the `extraction` returned by POST /chat.
 
-    No LLM is involved: names are matched by trigram similarity, interests by kind, columns,
-    and full-text search; every `reason` comes from stored data. `status` is
+    Names are matched by trigram similarity, interests by kind, columns and full-text search.
+    Free-text interests (no taxonomy or keyword match, no negation) are also searched by
+    meaning: Gemini embeddings of the words against embedded place descriptions; those cards
+    say "Gợi ý theo mô tả". Every other `reason` comes from stored data. `status` is
     `unsupported_destination` for other cities and `empty_extraction` for an all-empty
     extraction. Use `section` + `offset` to page one section ("xem thêm").
     """
-    return await retrieve(conn, body)
+    return await retrieve(conn, body, embed)
