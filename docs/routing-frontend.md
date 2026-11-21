@@ -152,8 +152,9 @@ Lưu ý:
 - Sau khi kéo tay, `busy_minutes` cũ không còn đúng. Hoặc đánh dấu là "chưa cập nhật", hoặc tự
   gọi lại như dòng cuối của bảng. Nếu tự gọi thì debounce (ví dụ 1 giây sau lần kéo cuối), đừng
   gọi mỗi lần thả.
-- Cùng một request luôn cho cùng kết quả. Bấm "Gợi ý lại" mà không đổi gì sẽ ra y hệt; có thể tắt
-  nút khi state chưa đổi.
+- Cùng một request cho cùng kết quả. Bấm "Gợi ý lại" mà không đổi gì sẽ ra y hệt; có thể tắt
+  nút khi state chưa đổi. Ngoại lệ: request rất lớn trên server đang bận có thể chạm giới hạn
+  thời gian của solver, khi đó kết quả là lời giải tốt nhất tới lúc dừng.
 - Ghim có ưu tiên cao hơn cân bằng: người dùng ghim 6 nơi vào một ngày thì server giữ nguyên, dù
   ngày đó quá tải. Nơi không vừa sẽ nằm trong `unscheduled` với lý do `no_time`.
 
@@ -164,6 +165,8 @@ Lưu ý:
 Khi người dùng xác nhận cách chia, gửi lại đúng request của bước 1, nhưng `pins` chứa **mọi**
 nơi với ngày người dùng đã duyệt. Server giữ đúng ngày đó cho từng nơi, chỉ sắp thứ tự trong
 ngày và tính giờ. Thiếu một nơi trong `pins` thì server được phép chuyển nó sang ngày khác.
+Xếp `places` theo đúng thứ tự `days[].places` của `/routing/days` (ngày 1 trước, rồi ngày 2...):
+server bắt đầu từ thứ tự đó, nên không bỏ nơi nào bước 1 đã xếp được.
 
 ```json
 {

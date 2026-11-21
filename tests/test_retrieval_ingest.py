@@ -36,7 +36,16 @@ def test_name_keys_are_normalized_and_deduplicated() -> None:
 def test_unreadable_hours_are_stored_as_unknown() -> None:
     good = {"mon": [["06:00", "22:00"]]}
     assert prepare_row(row(opening_hours_normalized=good), {}, "v1")["opening_hours"] == good
-    for bad in ({"mon": [["9h00", "22:00"]]}, {"mon": [["06:00", "25:00"]]}, {"mon": "06-22"}):
+    bad_values = (
+        {"mon": [["9h00", "22:00"]]},
+        {"mon": [["06:00", "25:00"]]},
+        {"mon": "06-22"},
+        {"mon": [["12:00", "12:75"]]},  # minutes past 59 used to read as 13:15
+        {"mon": [["08:00", "1_7:00"]]},  # int() accepts digit separators
+        {"mon": [[" 8:00", "17:00"]]},
+        {"Mon": [["08:00", "17:00"]]},  # an unknown day key read as "hours unknown"
+    )
+    for bad in bad_values:
         assert prepare_row(row(opening_hours_normalized=bad), {}, "v1")["opening_hours"] is None
     assert prepare_row(row(), {}, "v1")["opening_hours"] is None
 

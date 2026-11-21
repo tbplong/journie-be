@@ -1,12 +1,12 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
-from psycopg import AsyncConnection
 
 from app.api.routes.retrieval import get_connection
 from app.core.config import Settings, get_settings
 from app.core.errors import problem_doc
 from app.schemas.routing import DaysResponse, RoutingRequest, RoutingResponse
+from app.services.retrieval.db import Connect
 from app.services.routing.service import plan, plan_days
 
 router = APIRouter(prefix="/routing", tags=["routing"])
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/routing", tags=["routing"])
 async def routing(
     body: RoutingRequest,
     request: Request,
-    conn: Annotated[AsyncConnection, Depends(get_connection)],
+    connect: Annotated[Connect, Depends(get_connection)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> RoutingResponse:
     """Plan one tour per trip day from `start` and back, visiting as many of `places` as fit
@@ -36,9 +36,9 @@ async def routing(
     Read `days[].stops` top to bottom. Places that do not fit are listed in `unscheduled` with a
     reason. Travel times come from OSRM road distances (walk below 1 km at 4.5 km/h, ride at
     20 km/h); without OSRM they are straight-line estimates and `warnings` has
-    `travel_estimated`. Visit durations are per category (placeholder values).
+    `travel_estimated`. Visit durations are per category (config/visit_minutes.yaml).
     """
-    return await plan(conn, request.app.state.http_client, settings, body)
+    return await plan(connect, request.app.state.http_client, settings, body)
 
 
 DAYS_RESPONSES = {
@@ -57,7 +57,7 @@ DAYS_RESPONSES = {
 async def routing_days(
     body: RoutingRequest,
     request: Request,
-    conn: Annotated[AsyncConnection, Depends(get_connection)],
+    connect: Annotated[Connect, Depends(get_connection)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> DaysResponse:
     """Same request and planner as POST /routing, answered as one list of places per day for
@@ -65,4 +65,4 @@ async def routing_days(
     again after edits, send the edited places as `pins`; once every place is pinned, POST
     /routing returns the timed itinerary for that split.
     """
-    return await plan_days(conn, request.app.state.http_client, settings, body)
+    return await plan_days(connect, request.app.state.http_client, settings, body)

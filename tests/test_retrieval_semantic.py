@@ -17,7 +17,14 @@ from app.services.gemini import (
     embed_all,
     embed_texts,
 )
-from app.services.retrieval.scoring import MATCH, SEMANTIC_FLOOR, Hit, match_score
+from app.services.retrieval import semantic
+from app.services.retrieval.scoring import (
+    ADDED_WEIGHTS,
+    MATCH,
+    SEMANTIC_FLOOR,
+    Hit,
+    match_score,
+)
 from app.services.retrieval.semantic import QueryCache, document_hash, document_text, negated
 
 SETTINGS = Settings(_env_file=None)
@@ -106,6 +113,19 @@ def test_long_lists_are_split_into_batches_in_order() -> None:
         ("không khí yên tĩnh", False),
         ("không gian xanh, không ồn ào", True),
         ("quán yên tĩnh để làm việc", False),
+        # dishes and double negatives are not negations
+        ("bún chả", False),
+        ("chả giò", False),
+        ("chả cá Lã Vọng", False),
+        ("địa điểm không thể bỏ lỡ", False),
+        ("chỗ tránh nắng", False),
+        # unaccented, abbreviated and English negations
+        ("khong qua du lich", True),
+        ("ko dong nguoi", True),
+        ("khong gian xanh", False),
+        ("don't like crowds", True),
+        ("somewhere without tourists", True),
+        ("never touristy", True),
     ],
 )
 def test_negated_text_is_detected(text: str, expected: bool) -> None:
@@ -128,12 +148,30 @@ def test_the_cache_embeds_only_new_texts_and_stays_bounded() -> None:
     assert calls[-1] == ["a"]
 
 
+def test_closeness_spans_each_querys_own_hits() -> None:
+    # Real similarities sit in a narrow band above the threshold; the closest hit gets 1.
+    assert semantic.closeness({"a": 0.721, "b": 0.686, "c": 0.65}) == pytest.approx(
+        {"a": 1.0, "b": 0.507, "c": 0.0}, abs=1e-3
+    )
+    assert semantic.closeness({"only": 0.7}) == {"only": 1.0}
+    assert semantic.closeness({}) == {}
+
+
+def test_a_semantic_hit_inside_a_group_section_still_orders_by_closeness() -> None:
+    category = Hit("category", "prefer")
+    near = match_score([category, Hit("semantic", "prefer", "x", closeness=1.0)])
+    far = match_score([category, Hit("semantic", "prefer", "x", closeness=0.0)])
+    assert near - far > ADDED_WEIGHTS["explore"]  # the seeded shuffle cannot undo it
+    assert far > match_score([category])
+
+
 def test_document_hash_changes_with_text_and_model() -> None:
     text = document_text("Quán A", "Quán cà phê yên tĩnh")
     assert text == "title: Quán A | text: Quán cà phê yên tĩnh"
     assert document_text("Quán A", None) == "title: Quán A | text: Quán A"
     assert document_hash("m1", text) != document_hash("m1", text + "!")
     assert document_hash("m1", text) != document_hash("m2", text)
+    assert document_hash("models/m1", text) == document_hash("m1", text)
 
 
 def test_closer_semantic_hits_score_higher() -> None:
@@ -146,3 +184,42 @@ def test_closer_semantic_hits_score_higher() -> None:
 def test_schema_vector_size_matches_the_embedding_size() -> None:
     schema = (Path(__file__).resolve().parents[1] / "db" / "schema.sql").read_text()
     assert f"embedding vector({EMBEDDING_DIMENSIONS})" in schema
+
+
+def test_a_term_that_names_places_is_not_searched_by_meaning() -> None:
+    from app.services.retrieval.interests import InterestRequest
+    from app.services.retrieval.service import _semantic
+
+    calls: list[list[str]] = []
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        calls.append(texts)
+        raise GeminiUpstreamError("stop after recording the call")
+
+    pho = InterestRequest("phở", "prefer", "interest", text="pho")
+    quiet = InterestRequest("quán yên tĩnh", "prefer", "interest", text="quan yen tinh")
+    hits = {pho.key: {"pho-hung": "name", "market": "text"}, quiet.key: {"cafe": "text"}}
+    asyncio.run(_semantic(None, [pho, quiet], {}, embed, hits, []))  # type: ignore[arg-type]
+    assert calls == [[semantic.QUERY_FORMAT.format("quán yên tĩnh")]]
+
+
+def test_a_cached_text_evicted_while_waiting_for_the_embedder_is_still_returned() -> None:
+    async def scenario() -> dict[str, list[float]]:
+        cache = QueryCache(size=1)
+        release = asyncio.Event()
+
+        async def slow(texts: list[str]) -> list[list[float]]:
+            await release.wait()
+            return [[1.0] for _ in texts]
+
+        async def fast(texts: list[str]) -> list[list[float]]:
+            return [[2.0] for _ in texts]
+
+        await cache.get_many(["old"], fast)
+        waiting = asyncio.create_task(cache.get_many(["old", "new"], slow))
+        await asyncio.sleep(0)  # A is waiting for its embedding of "new"
+        await cache.get_many(["other"], fast)  # B evicts "old" (size 1)
+        release.set()
+        return await waiting
+
+    assert asyncio.run(scenario()) == {"old": [2.0], "new": [1.0]}

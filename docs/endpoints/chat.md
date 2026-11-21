@@ -196,8 +196,12 @@ phiếu.
 5. **`conflict_from_observation`**: tính các mâu thuẫn **kiểm chứng được** từ giá trị:
    - `date_order`: ngày kết thúc trước ngày bắt đầu.
    - `duration_disagreement`: `duration_days` khác số ngày tính từ hai mốc (tính cả hai đầu).
-   - `budget_disagreement`: có `min` lớn hơn `max`.
-   - `must_visit_avoid`: cùng một nơi vừa bắt buộc vừa tránh.
+   - `budget_disagreement`: có `min` lớn hơn một cận trên (`max`, `eq`, hay chính `budget_vnd`).
+     Thiếu cận dưới hoặc cận trên thì không kết luận (`None`).
+   - `must_visit_avoid`: cùng một nơi vừa bắt buộc vừa tránh (so theo `place_key`: không phân
+     biệt hoa/thường, khoảng trắng, dấu chấm).
+
+   `possible_conflicts` được bỏ trùng trước bước này.
 
    Quan sát được → thêm vào `possible_conflicts`; chứng minh được là không có → xoá khỏi đó;
    không đủ dữ liệu (`None`) → để nguyên.

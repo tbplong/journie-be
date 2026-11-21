@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
-from app.services.retrieval.hours import WeeklyHours, weekly_intervals
+from app.services.retrieval.hours import DAYS, WeeklyHours, weekly_intervals
 from app.services.retrieval.scoring import MICHELIN_LABELS
 from app.services.retrieval.taxonomy import Taxonomy
 from app.services.retrieval.text import fold_case, lexeme_vector, norm
@@ -38,8 +38,11 @@ def taxonomy_issues(
 def readable_hours(hours: Any) -> WeeklyHours | None:
     """The hours if query time can parse them, else None (the place counts as hours unknown).
 
-    One unreadable value ("9h00", "25:00") would otherwise fail every request that sees it.
+    One unreadable value ("9h00", "25:00") would otherwise fail every request that sees it. An
+    unknown day key ("Mon") is unreadable too: query time would ignore it silently.
     """
+    if isinstance(hours, dict) and set(hours) - set(DAYS):
+        return None
     try:
         weekly_intervals(hours)
     except (ValueError, TypeError, AttributeError):

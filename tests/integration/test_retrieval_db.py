@@ -21,6 +21,7 @@ from app.core.config import Settings
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
 from app.services.retrieval import candidates, names
 from app.services.retrieval.config import INTEREST_MAP
+from app.services.retrieval.db import reuse
 from app.services.retrieval.interests import AvoidRules
 from app.services.retrieval.service import retrieve
 from app.services.retrieval.text import fold_case, has_diacritics, lexeme_query, norm
@@ -54,7 +55,7 @@ def run[T](job: Callable[[AsyncConnection], Awaitable[T]]) -> T:
 
 def retrieval(**extraction: Any) -> RetrievalResponse:
     request = RetrievalRequest.model_validate({"extraction": {**BASE, **extraction}, "limit": 20})
-    return run(lambda conn: retrieve(conn, request))
+    return run(lambda conn: retrieve(reuse(conn), request))
 
 
 @pytest.mark.parametrize(
@@ -64,7 +65,12 @@ def retrieval(**extraction: Any) -> RetrievalResponse:
         ("dinh doc lap", "resolved", "dinh-doc-lap-97d379"),
         ("War Remnants Museum", "resolved", "bao-tang-chung-tich-chien-tranh-08b374"),
         ("Bún thịt nướng", "ambiguous", None),
-        ("Landmark 81", "not_found", None),
+        ("Tháp Eiffel", "not_found", None),
+        # A name is matched as a whole from its start: the tagline or branch may follow.
+        ("Thảo Cầm Viên", "resolved", "thao-cam-vien-sai-gon-zoo-botanical-gard-034c49"),
+        ("Bitexco", "resolved", "bitexco-financial-tower-6e8261"),
+        ("Katinat", "ambiguous", None),  # two branches; one also has the bare alias
+        ("Cộng Cà Phê", "ambiguous", None),
     ],
 )
 def test_name_lookup(query: str, status: str, poi_id: str | None) -> None:
@@ -72,6 +78,36 @@ def test_name_lookup(query: str, status: str, poi_id: str | None) -> None:
     assert match.status == status
     if poi_id:
         assert match.hits[0].poi_id == poi_id
+
+
+@pytest.mark.parametrize(
+    ("query", "wrong"),
+    [
+        ("Củ Chi", "quan-chay-chi-cu-69a818"),  # same words, other order
+        ("Chợ Lớn", "cong-ca-phe-e74d6f"),  # street in a branch address
+        ("Lê Lợi", "trung-nguyen-coffee-1919dc"),
+        ("Biên Hòa", "nha-hang-hoa-bien-5593dd"),
+    ],
+)
+def test_name_lookup_never_resolves_to_another_place(query: str, wrong: str) -> None:
+    match = run(lambda conn: names.lookup(conn, query))
+    assert match.status != "resolved"
+    assert wrong not in {hit.poi_id for hit in match.hits}
+
+
+def test_accented_name_lookup_keeps_accents_and_lists_namesakes_first() -> None:
+    match = run(lambda conn: names.lookup(conn, "Phở"))
+    assert match.status == "ambiguous"
+    assert all(hit.poi_id.startswith("pho-") for hit in match.hits), match.hits
+
+
+def test_avoid_chain_name_drops_every_branch() -> None:
+    branches = run(lambda conn: names.exact_ids(conn, "Cộng Cà Phê"))
+    assert len(branches) == 4
+    assert not retrieval(interests=["cafe"], avoid=["Cộng Cà Phê"]).disambiguation
+    pinned = retrieval(must_visit=["Katinat"])
+    assert not pinned.pinned
+    assert [d.query for d in pinned.disambiguation] == ["Katinat"]
 
 
 def test_avoid_finds_every_branch_of_a_chain() -> None:
@@ -126,6 +162,7 @@ def test_pinned_avoid_and_status() -> None:
     listed = {i.id for s in response.sections for i in s.items}
     assert "cho-ben-thanh-68e3af" not in listed
     assert retrieval(destination="Hanoi", interests=["food"]).status == "unsupported_destination"
+    assert retrieval(destination="Hồ Chí Minh", interests=["food"]).status == "ok"
     assert response.meta.data_version == "places_1000"
 
 
@@ -142,9 +179,9 @@ def test_quality_bar_applies_to_suggestions_not_to_named_places() -> None:
     low, suggested = run(job)
     assert low, "no place below the bar: pick another fixture"
     assert not low & suggested
-    assert "chua-pho-chieu-1f5bf5" in low
-    pinned = retrieval(must_visit=["Chùa Phổ Chiếu"], interests=["culture"]).pinned
-    assert [p.id for p in pinned] == ["chua-pho-chieu-1f5bf5"]
+    assert "bao-tang-biet-dong-sai-gon-9ceba2" in low
+    pinned = retrieval(must_visit=["Bảo tàng Biệt Động Sài Gòn"], interests=["culture"]).pinned
+    assert [p.id for p in pinned] == ["bao-tang-biet-dong-sai-gon-9ceba2"]
 
 
 def test_seed_changes_the_order_and_pages_stay_consistent() -> None:
@@ -152,7 +189,7 @@ def test_seed_changes_the_order_and_pages_stay_consistent() -> None:
         request = RetrievalRequest.model_validate(
             {"extraction": {**BASE, "interests": ["cafe"]}, "seed": seed, "offset": offset}
         )
-        response = run(lambda conn: retrieve(conn, request))
+        response = run(lambda conn: retrieve(reuse(conn), request))
         return [item.id for item in response.sections[0].items]
 
     assert page(1) == page(1)
@@ -166,7 +203,7 @@ def test_selected_place_is_not_suggested_again() -> None:
         request = RetrievalRequest.model_validate(
             {"extraction": {**BASE, "interests": ["cafe"]}, "selected_ids": selected, "limit": 20}
         )
-        response = run(lambda conn: retrieve(conn, request))
+        response = run(lambda conn: retrieve(reuse(conn), request))
         return [item.id for section in response.sections for item in section.items]
 
     picked = cafe_ids([])[0]

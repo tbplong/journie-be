@@ -252,11 +252,15 @@ avoid: nodes={'entertainment.nightlife'}, filters=(), names=()
 **SQL `LOOKUP_SQL`** chạy trên cột `name_keys`, là mảng các dạng `norm()` của tên, tên tiếng Anh,
 tên ASCII và các tên gọi khác:
 
-- Với mỗi nơi, mỗi khoá `k`: độ giống = max của `similarity(k, q)` (giống toàn chuỗi, theo
-  trigram) và `word_similarity(q, k)` (query giống một đoạn trong tên; giúp "Ben Thanh" khớp
-  "Chợ Bến Thành").
-- `exact` = có khoá nào bằng đúng query; `exact_marked` = query có dấu và trùng dạng giữ dấu.
-- Giữ nơi khớp chính xác hoặc có độ giống ≥ 0.35, xếp chính xác trước rồi theo độ giống, lấy 5.
+- `exact` ("khớp tên") = có khoá bằng đúng query **hoặc bắt đầu bằng query + dấu cách**: phần
+  chi nhánh "(…)" hay khẩu hiệu " - …" luôn đứng sau tên, nên "Katinat" khớp mọi chi nhánh còn
+  "Chợ Lớn" không khớp "Cộng Cà Phê (152 Đường Chợ Lớn)". `exact_marked` = như vậy trên dạng
+  giữ dấu (`name_keys_vi`), khi query có dấu.
+- Độ giống = `similarity(k, q)` (đối xứng, theo trigram: chữ thừa bị trừ điểm), trên khoá giữ
+  dấu khi query có dấu. Không dùng `word_similarity`: nó bỏ qua thứ tự từ ("Củ Chi" = "Chị Củ")
+  và khớp tên đường trong địa chỉ chi nhánh.
+- Giữ nơi khớp tên hoặc có độ giống ≥ 0.35; xếp khớp dấu, khớp tên, độ giống, tên ngắn hơn, rồi
+  id; lấy 5.
 
 **`classify`** (thuần) quyết định:
 
@@ -271,15 +275,17 @@ Output thật:
 
 ```
 "Phở Hùng", hai nơi khớp chính xác, chỉ một nơi khớp cả dấu → resolved (nơi khớp dấu)
-"Ben Thanh", độ giống 0.72 và 0.41                            → resolved (0.72, cách 0.31)
-"Ben",       độ giống 0.50 và 0.45                            → ambiguous (cả hai)
+"Ben Thanh", độ giống 0.71 và 0.56                            → resolved (0.71, cách 0.15)
+"Ben",       hai nơi có tên bắt đầu bằng "Ben"                → ambiguous (cả hai)
+"Chợ Lớn",   chỉ khớp trong địa chỉ một chi nhánh (0.30)       → not_found
 ```
 
 Các ngưỡng là hằng số có tên ở đầu file (`RESOLVE_MIN`, `RESOLVE_GAP`, `AMBIGUOUS_MIN`,
 `AMBIGUOUS_BAND`, `LOOKUP_LIMIT`), là giá trị khởi điểm, chỉnh bằng `eval/run_eval.py`.
 
-**`exact_ids`** (chỉ dùng cho `avoid`): `WHERE name_keys @> ARRAY[q]` dùng GIN index
-`pois_name_keys_idx`, không có LIMIT, rồi áp cùng quy tắc dấu qua `classify`.
+**`exact_ids`** (chỉ dùng cho `avoid`): mọi nơi khớp tên (cùng điều kiện `exact`, nên gồm mọi
+chi nhánh), không có LIMIT, rồi áp cùng quy tắc dấu qua `classify`. Điều kiện "bắt đầu bằng"
+không dùng được GIN index nên quét mọi nơi, như `LOOKUP_SQL`.
 
 ### 9. [candidates.py](../../app/services/retrieval/candidates.py): SQL lấy ứng viên
 

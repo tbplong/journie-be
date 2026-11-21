@@ -10,6 +10,7 @@ from psycopg import AsyncConnection
 
 from app.core.config import Settings
 from app.schemas.routing import DaysResponse, RoutingRequest, RoutingResponse
+from app.services.retrieval.db import reuse
 from app.services.routing.rules import RULES
 from app.services.routing.service import plan, plan_days
 from tests.integration.test_retrieval_db import retrieval, run
@@ -35,7 +36,7 @@ def test_retrieved_places_become_a_feasible_two_day_plan() -> None:
     async def job(conn: AsyncConnection) -> RoutingResponse:
         async with httpx.AsyncClient() as client:
             settings = Settings(_env_file=None, routing_time_limit_seconds=3.0)
-            return await plan(conn, client, settings, body)
+            return await plan(reuse(conn), client, settings, body)
 
     result = run(job)
     stops = [stop for day in result.days for stop in day.stops]
@@ -67,7 +68,7 @@ def test_days_from_real_data_are_balanced_and_keep_every_place() -> None:
     async def job(conn: AsyncConnection) -> DaysResponse:
         async with httpx.AsyncClient() as client:
             settings = Settings(_env_file=None, routing_time_limit_seconds=3.0)
-            return await plan_days(conn, client, settings, body)
+            return await plan_days(reuse(conn), client, settings, body)
 
     result = run(job)
     placed = [p.id for day in result.days for p in day.places] + [
@@ -76,3 +77,62 @@ def test_days_from_real_data_are_balanced_and_keep_every_place() -> None:
     assert sorted(placed) == sorted(cards)
     shares = [day.busy_minutes / day.capacity_minutes for day in result.days]
     assert max(shares) - min(shares) <= RULES.balance_tolerance + 0.01  # minutes are rounded
+
+
+def solve_ids(ids: list[str], end_at: str, days: bool, **extra: object):
+    """/routing/days (days=True) or /routing for these place ids, from 2026-11-21 08:00."""
+    from tests.test_routing_api import card
+
+    body = RoutingRequest.model_validate(
+        {
+            "places": [card(i) for i in ids],
+            "start": {"lat": 10.7725, "lon": 106.6980},
+            "start_at": "2026-11-21T08:00",
+            "end_at": end_at,
+            **extra,
+        }
+    )
+
+    async def job(conn: AsyncConnection) -> DaysResponse | RoutingResponse:
+        async with httpx.AsyncClient() as client:
+            settings = Settings(_env_file=None, routing_time_limit_seconds=6.0)
+            return await (plan_days if days else plan)(reuse(conn), client, settings, body)
+
+    return run(job)
+
+
+def test_cafe_heavy_places_are_split_evenly() -> None:
+    ids = [
+        "ca-phe-coi-xua-b4e977", "cafe-thuc-2c0f2d", "96b-cafe-roastery-4ed744",
+        "saigon-chic-coffee-ea47db", "nha-hang-chay-an-duyen-52e095", "morico-ef8c5a",
+        "green-palm-gallery-40bcbf", "san-khau-kich-hoang-thai-thanh-368d13",
+        "hai-an-gallery-369e91", "chua-an-phu-1e8bcd",
+    ]  # fmt: skip
+    result = solve_ids(ids, "2026-11-22T21:00", days=True)
+    shares = [day.busy_minutes / day.capacity_minutes for day in result.days]
+    assert max(shares) - min(shares) <= RULES.balance_tolerance + 0.01
+    assert not [w for w in result.warnings if w.startswith(("day_max", "day_spread"))]
+
+
+def test_restaurants_are_kept_apart_when_another_stop_fits_between() -> None:
+    ids = [
+        "parkhaus-thao-dien-df4d3d", "muteki-4a8987", "chang-modern-thai-cuisine-bbb6c4",
+        "lotte-cinema-cong-hoa-b69fa6", "chua-quan-am-e3f7f5",
+    ]  # fmt: skip
+    result = solve_ids(ids, "2026-11-21T21:00", days=False)
+    assert len(result.days[0].stops) == 5
+    assert not [w for w in result.warnings if w.startswith("not_adjacent")]
+
+
+def test_pinning_the_suggested_split_keeps_every_place() -> None:
+    found = retrieval(interests=["cafe", "culture", "food", "nightlife", "shopping"])
+    ids = list(dict.fromkeys(card.id for section in found.sections for card in section.items))[:40]
+    days = solve_ids(ids, "2026-11-22T21:00", days=True)
+    split = [[place.id for place in day.places] for day in days.days]
+    pins = [
+        {"id": i, "date": str(day.date)} for day, day_ids in zip(days.days, split) for i in day_ids
+    ]
+    ordered = [i for day_ids in split for i in day_ids]  # in /routing/days' visiting order
+    routed = solve_ids(ordered, "2026-11-22T21:00", days=False, pins=pins)
+    assert [[stop.poi.id for stop in day.stops] for day in routed.days] and not routed.unscheduled
+    assert [len(day.stops) for day in routed.days] == list(map(len, split))

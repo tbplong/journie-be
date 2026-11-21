@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 import psycopg
@@ -10,6 +11,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import ProblemError, problem_doc
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
 from app.services.gemini import embed_all
+from app.services.retrieval.db import Connect
 from app.services.retrieval.semantic import Embed
 from app.services.retrieval.service import retrieve
 
@@ -26,7 +28,9 @@ def _unavailable(exc: Exception) -> ProblemError:
     )
 
 
-async def get_connection(request: Request) -> AsyncIterator[AsyncConnection]:
+def get_connection(request: Request) -> Connect:
+    """Borrows a pool connection per block of queries, not for the whole request: waiting for
+    Gemini or the routing solver must not starve other requests of the small pool."""
     pool: AsyncConnectionPool | None = getattr(request.app.state, "db_pool", None)
     if pool is None:
         raise ProblemError(
@@ -35,11 +39,16 @@ async def get_connection(request: Request) -> AsyncIterator[AsyncConnection]:
             "Retrieval not configured",
             "DATABASE_URL is not set on the server.",
         )
-    try:
-        async with pool.connection() as conn:
-            yield conn
-    except (PoolTimeout, psycopg.OperationalError) as exc:
-        raise _unavailable(exc) from exc
+
+    @asynccontextmanager
+    async def connect() -> AsyncIterator[AsyncConnection]:
+        try:
+            async with pool.connection() as conn:
+                yield conn
+        except (PoolTimeout, psycopg.OperationalError) as exc:
+            raise _unavailable(exc) from exc
+
+    return connect
 
 
 def get_embedder(
@@ -71,7 +80,7 @@ def get_embedder(
 )
 async def retrieval(
     body: RetrievalRequest,
-    conn: Annotated[AsyncConnection, Depends(get_connection)],
+    connect: Annotated[Connect, Depends(get_connection)],
     embed: Annotated[Embed | None, Depends(get_embedder)],
 ) -> RetrievalResponse:
     """Find Ho Chi Minh City places for the `extraction` returned by POST /chat.
@@ -83,4 +92,4 @@ async def retrieval(
     `unsupported_destination` for other cities and `empty_extraction` for an all-empty
     extraction. Use `section` + `offset` to page one section ("xem thêm").
     """
-    return await retrieve(conn, body, embed)
+    return await retrieve(connect, body, embed)

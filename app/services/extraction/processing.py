@@ -120,7 +120,10 @@ def observed_conflicts(extraction: Extraction) -> dict[str, bool | None]:
         "date_order": None,
         "duration_disagreement": None,
         "budget_disagreement": None,
-        "must_visit_avoid": bool(set(extraction.must_visit) & set(extraction.avoid)),
+        # Same matching as the alias table: case, spaces and dots do not make another place.
+        "must_visit_avoid": bool(
+            set(map(place_key, extraction.must_visit)) & set(map(place_key, extraction.avoid))
+        ),
     }
     if extraction.start_date is not None and extraction.end_date is not None:
         days = (
@@ -129,17 +132,21 @@ def observed_conflicts(extraction: Extraction) -> dict[str, bool | None]:
         conflicts["date_order"] = days < 1
         if extraction.duration_days is not None:
             conflicts["duration_disagreement"] = extraction.duration_days != days
-    bounds: dict[str, list[int]] = {"min": [], "max": []}
+    # An exact budget (eq atom or the scalar) is an upper bound too: "exactly 3M, at least 5M".
+    lower: list[int] = []
+    upper: list[int] = [extraction.budget_vnd] if extraction.budget_vnd is not None else []
     uncertain = False
     for atom in extraction.hard_constraints:
-        if atom.field == "budget_vnd" and atom.operator in bounds:
+        if atom.field == "budget_vnd" and atom.operator in ("min", "max", "eq"):
             if canonical_int(atom.value):
-                bounds[atom.operator].append(int(atom.value))
+                (lower if atom.operator == "min" else upper).append(int(atom.value))
             else:
                 uncertain = True
-    observed = any(minimum > maximum for minimum in bounds["min"] for maximum in bounds["max"])
-    # An unreadable bound leaves "no conflict" unproven, but not an observed conflict.
-    conflicts["budget_disagreement"] = True if observed else None if uncertain else False
+    observed = any(minimum > maximum for minimum in lower for maximum in upper)
+    # Without both a lower and an upper bound, or with an unreadable one, "no conflict" is not
+    # proven; neither is a conflict.
+    unknown = uncertain or not lower or not upper
+    conflicts["budget_disagreement"] = True if observed else None if unknown else False
     return conflicts
 
 
@@ -211,6 +218,7 @@ def repair_extraction(extraction: Extraction) -> tuple[Extraction, list[str]]:
             for value in data[field]:
                 if value not in placed:
                     data[kind].append({"field": field, "operator": operator, "value": value})
+                    placed.add(value)  # a repeated list entry gets one atom
                     repairs.append("constraint_from_list")
 
     current = Extraction.model_validate(data)
@@ -234,7 +242,8 @@ def repair_extraction(extraction: Extraction) -> tuple[Extraction, list[str]]:
         repairs.append("scalar_from_constraint")
 
     current = Extraction.model_validate(data)
-    declared = data["possible_conflicts"]
+    # A repeat would survive removing a disproved conflict and still ask for clarification.
+    declared = data["possible_conflicts"] = list(dict.fromkeys(data["possible_conflicts"]))
     for conflict, present in observed_conflicts(current).items():
         if present is True and conflict not in declared:
             declared.append(conflict)

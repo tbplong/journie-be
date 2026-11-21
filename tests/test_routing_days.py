@@ -11,6 +11,7 @@ from app.api.routes.retrieval import get_connection
 from app.core.config import get_settings
 from app.main import app
 from app.schemas.routing import DaysResponse, RoutingRequest
+from app.services.retrieval.db import reuse
 from app.services.retrieval.poi import Poi
 from app.services.routing import service
 from app.services.routing.rules import RULES
@@ -34,7 +35,7 @@ def days_plan(monkeypatch: pytest.MonkeyPatch, pois: list[Poi], body: RoutingReq
 
     async def run() -> DaysResponse:
         async with httpx.AsyncClient() as http:
-            return await service.plan_days(None, http, SETTINGS, body)
+            return await service.plan_days(reuse(None), http, SETTINGS, body)  # type: ignore[arg-type]
 
     return asyncio.run(run())
 
@@ -145,3 +146,50 @@ def test_days_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
     assert all(day["capacity_minutes"] == 13 * 60 for day in data["days"])
     assert data["open_dates"] == {"l0": TWO_DAYS_DATES, "l1": TWO_DAYS_DATES}
     assert data["meta"]["rules_version"] == RULES.version
+
+
+def test_food_heavy_places_are_still_balanced(monkeypatch: pytest.MonkeyPatch) -> None:
+    # T1: with one food place on the light day, every food move used to clash and was refused.
+    pois = [
+        *(poi(f"c{i}", 0.002 * i, "food.cafe") for i in range(4)),
+        *(poi(f"r{i}", -0.002 * i) for i in range(2)),
+        *landmarks("l", 4, dlat=0.001),
+    ]
+    result = days_plan(monkeypatch, pois, request([p.id for p in pois], *TWO_DAYS))
+    shares = [day.busy_minutes / day.capacity_minutes for day in result.days]
+    assert max(shares) - min(shares) <= RULES.balance_tolerance, ids(result)
+    assert not [w for w in result.warnings if not w.startswith("travel_estimated")]
+
+
+def test_spare_days_are_used_on_a_long_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Moving a place to one of several empty days leaves the spread as it is; it must still pay.
+    pois = landmarks("l", 16)
+    body = request([p.id for p in pois], "2026-11-20T08:00", "2026-11-27T21:00")  # 8 days
+    result = days_plan(monkeypatch, pois, body)
+    shares = [day.busy_minutes / day.capacity_minutes for day in result.days]
+    assert max(shares) - min(shares) <= RULES.balance_tolerance, ids(result)
+
+
+def test_restaurants_are_split_by_another_stop_when_hours_allow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # T4: restaurants open at 11:00 only; a cinema (150 min) and a pagoda can go between them.
+    open_11 = {day: [["11:00", "22:00"]] for day in ("fri", "sat")}
+    pois = [
+        *(poi(f"r{i}", 0.003 * i, hours=open_11) for i in range(3)),
+        poi("cinema", 0.004, "entertainment.cinema", hours={"fri": [["09:00", "23:00"]]}),
+        poi("pagoda", -0.003, "culture_religion.pagoda", hours=None),
+    ]
+    result = plan(
+        monkeypatch, pois, request([p.id for p in pois], "2026-11-20T08:00", "2026-11-20T21:00")
+    )
+    [day] = result.days
+    order = "".join(stop.poi.id[0] for stop in day.stops)
+    assert len(order) == 5 and "rr" not in order, order
+    assert not [w for w in result.warnings if w.startswith("not_adjacent")]
+
+
+def test_the_same_request_gives_the_same_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    pois = [poi(f"r{i}", 0.002 * i) for i in range(6)] + landmarks("l", 10, dlat=0.001)
+    body = request([p.id for p in pois], "2026-11-20T08:00", "2026-11-23T21:00")
+    assert ids(days_plan(monkeypatch, pois, body)) == ids(days_plan(monkeypatch, pois, body))

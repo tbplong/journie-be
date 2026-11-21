@@ -8,12 +8,13 @@ from fastapi.testclient import TestClient
 from app.api.routes.retrieval import get_connection
 from app.main import app
 from app.schemas.retrieval import RetrievalRequest
+from app.services.retrieval.db import Connect, reuse
 from app.services.retrieval.service import request_seed
 from tests.test_retrieval_names_interests import BASE
 
 
-async def no_connection() -> AsyncIterator[None]:
-    yield None  # the statuses tested here return before any query
+def no_connection() -> Connect:
+    return reuse(None)  # type: ignore[arg-type]  # the statuses tested here run no query
 
 
 @pytest.fixture
@@ -91,8 +92,9 @@ class FakePool:
 def test_database_error_is_a_retryable_problem(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def timed_out(conn: object, body: object, embed: object = None) -> None:
-        raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+    async def timed_out(connect: Connect, body: object, embed: object = None) -> None:
+        async with connect():
+            raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
 
     monkeypatch.setattr("app.api.routes.retrieval.retrieve", timed_out)
     monkeypatch.setattr(app.state, "db_pool", FakePool())

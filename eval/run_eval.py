@@ -31,6 +31,7 @@ from app.schemas.extraction import Extraction
 from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
 from app.services.gemini import embed_all
 from app.services.retrieval import candidates, names
+from app.services.retrieval.db import reuse
 from app.services.retrieval.semantic import Embed
 from app.services.retrieval.service import retrieve
 
@@ -73,7 +74,7 @@ async def run_case(
     request = RetrievalRequest.model_construct(
         extraction=extraction, selected_ids=[], section=None, offset=0, limit=10_000, seed=SEED
     )
-    response: RetrievalResponse = await retrieve(conn, request, embed)
+    response: RetrievalResponse = await retrieve(reuse(conn), request, embed)
     errors: list[str] = []
     result: dict[str, Any] = {"id": case["id"], "sections": {}, "names": []}
 

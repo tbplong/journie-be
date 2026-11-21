@@ -6,13 +6,15 @@
   ``HOME_SHARE`` of its hits, weighted by evidence. Description-only hits outside the home are
   dropped. It is merged into a requested section covering its home, which lifts its hits to the
   top with a reason; otherwise it becomes its own section of just its hits.
-* A POI appears in one section only: the one where it scores highest; ties go to the more
-  specific section (deeper matching node, then fewer nodes), then a required one, then the
-  traveller's order. Sections are listed in the traveller's order.
+* A POI appears in one section only: the most specific one accepting it (deeper matching node,
+  then fewer nodes; a keyword-only section is the most specific), then the one where it scores
+  highest, then a required one, then the traveller's order. Sections are listed in the
+  traveller's order.
 """
 
 import math
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.schemas.retrieval import PoiCard
@@ -51,6 +53,9 @@ BROAD_CUISINES = frozenset({"vietnamese", "diner", "asian", "regional"})
 HOME_SHARE = 0.6
 WEAK_WEIGHT = 0.3
 WEAK_EVIDENCE = frozenset({"text", "semantic"})
+# Semantic hits kept per request: the closest places that can be suggested (open, not avoided,
+# not already picked). semantic.py over-fetches so these filters do not shrink the list.
+SEMANTIC_KEEP = 30
 
 ANY_TIME = TripWindow(None, None, None)
 KeywordHits = dict[str, dict[str, Evidence]]  # request key -> poi id -> evidence
@@ -161,6 +166,15 @@ def prune_hits(
     return home, {**strong, **weak}
 
 
+def _closest_semantic(
+    found: dict[str, Evidence], close: dict[str, float], usable: Callable[[str], bool]
+) -> dict[str, Evidence]:
+    """Word hits plus the SEMANTIC_KEEP closest usable semantic-only hits."""
+    semantic = [i for i, e in found.items() if e == "semantic" and usable(i)]
+    keep = set(sorted(semantic, key=lambda i: (-close.get(i, 0.0), i))[:SEMANTIC_KEEP])
+    return {i: e for i, e in found.items() if e != "semantic" or i in keep}
+
+
 def _host(groups: list[SectionSpec], home: str | None) -> SectionSpec | None:
     """The requested group section covering the keyword's home; the most specific one wins."""
     best: tuple[tuple[int, int, int], SectionSpec] | None = None
@@ -182,9 +196,14 @@ def build_specs(
     served. ``hits`` are already pruned (see prune_hits) and ``homes`` maps request keys to the
     keyword's home node."""
     warnings: list[str] = []
-    requests = plan.requests or [
-        InterestRequest(key, "prefer", "interest", group=key) for key in INTEREST_MAP.defaults
-    ]
+    requests = plan.requests
+    # Defaults unless something can fill a section: an `other` atom that finds no place may not
+    # describe a place at all ("đi cùng trẻ em"). service.retrieve fetches the same defaults.
+    if not any(r.source == "interest" or r.group or hits.get(r.key) for r in requests):
+        defaults = [
+            InterestRequest(key, "prefer", "interest", group=key) for key in INTEREST_MAP.defaults
+        ]
+        requests = [*defaults, *requests]
     groups: list[SectionSpec] = []
     for order, request in enumerate(requests):
         if request.group is None:
@@ -344,13 +363,14 @@ def _best_placement(
     hours = ctx.hours(poi)
     if hours is None:
         return None
-    best: tuple[tuple[float, tuple[float, int], bool, int], Scored] | None = None
+    best: tuple[tuple[tuple[float, int], float, bool, int], Scored] | None = None
     for spec in specs:
         found = _hits_for(spec, poi, ctx.hits, ctx.closeness)
         if found is None:
             continue
         scored = ctx.score(poi, spec.key, found, hours, preferred)
-        rank = (round(scored.score, 6), spec.specificity(poi), spec.required, -spec.order)
+        # Specificity first: a required broad interest must not swallow a narrower one.
+        rank = (spec.specificity(poi), round(scored.score, 6), spec.required, -spec.order)
         if best is None or rank > best[0]:
             best = (rank, scored)
     if best is None and preferred:
@@ -389,10 +409,21 @@ def assemble(
     hits."""
     homes: dict[str, str | None] = {}
     pruned: KeywordHits = {}
+    ctx = _Context(pruned, window, anchors or [], seed, closeness or {})
+
+    def usable(poi_id: str) -> bool:
+        poi = pois.get(poi_id)
+        return (
+            poi is not None
+            and poi_id not in pinned_ids
+            and not avoided(poi, plan.avoid)
+            and ctx.hours(poi) is not None
+        )
+
     for key, found in hits.items():
+        found = _closest_semantic(found, ctx.closeness.get(key, {}), usable)
         homes[key], pruned[key] = prune_hits(found, pois)
     specs, warnings = build_specs(plan, pruned, homes)
-    ctx = _Context(pruned, window, anchors or [], seed, closeness or {})
     members: dict[str, list[Scored]] = {spec.key: [] for spec in specs}
     for poi in pois.values():
         if poi.id in pinned_ids or avoided(poi, plan.avoid):
@@ -400,11 +431,11 @@ def assemble(
         scored = _best_placement(poi, specs, ctx, poi.id in preferred_ids)
         if scored is None:
             continue
-        if scored.section not in members:
-            last = max((spec.order for spec in specs), default=-1)
-            specs.append(SectionSpec(PREFERRED_KEY, PREFERRED_LABEL, False, last + 1))
-            members[PREFERRED_KEY] = []
-        members[scored.section].append(scored)
+        members.setdefault(scored.section, []).append(scored)
+    if PREFERRED_KEY in members and all(spec.key != PREFERRED_KEY for spec in specs):
+        # Added after the loop: _best_placement cannot score a spec without group or request.
+        last = max((spec.order for spec in specs), default=-1)
+        specs.append(SectionSpec(PREFERRED_KEY, PREFERRED_LABEL, False, last + 1))
 
     results = [_finish(spec, members[spec.key], warnings) for spec in specs]
     return [r for r in results if r is not None], list(dict.fromkeys(warnings))

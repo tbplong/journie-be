@@ -1,6 +1,6 @@
 """Itinerary routing request/response models (POST /routing)."""
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -56,7 +56,20 @@ class RoutingRequest(BaseModel):
     @field_validator("start_at", "end_at")
     @classmethod
     def trip_time(cls, value: datetime) -> datetime:
-        return value.replace(tzinfo=TRIP_TZ) if value.tzinfo is None else value.astimezone(TRIP_TZ)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=TRIP_TZ)
+        try:
+            return value.astimezone(TRIP_TZ)
+        except OverflowError:  # year 1 or 9999 shifted out of range; not a ValueError itself
+            raise ValueError("date is out of range in Asia/Ho_Chi_Minh time") from None
+
+    @property
+    def last_day(self) -> date:
+        """The last trip day: an end at exactly midnight closes the day before."""
+        last = self.end_at.date()
+        if self.end_at.time() == time() and last > self.start_at.date():
+            return last - timedelta(days=1)
+        return last
 
     @model_validator(mode="after")
     def consistent(self) -> "RoutingRequest":
@@ -69,14 +82,14 @@ class RoutingRequest(BaseModel):
             raise ValueError("day_end must be after day_start")
         if self.end_at <= self.start_at:
             raise ValueError("end_at must be after start_at")
-        if (self.end_at.date() - self.start_at.date()).days >= MAX_DAYS:
+        if (self.last_day - self.start_at.date()).days >= MAX_DAYS:
             raise ValueError(f"the trip spans more than {MAX_DAYS} days")
         pinned = [pin.id for pin in self.pins]
         if len(pinned) != len(set(pinned)):
             raise ValueError("pins contains the same id twice")
         if unknown := set(pinned) - set(ids):
             raise ValueError(f"pins not in places: {sorted(unknown)}")
-        first, last = self.start_at.date(), self.end_at.date()
+        first, last = self.start_at.date(), self.last_day
         if outside := sorted(pin.id for pin in self.pins if not first <= pin.date <= last):
             raise ValueError(f"pins outside the trip dates: {outside}")
         return self
@@ -147,7 +160,10 @@ class DayPlan(BaseModel):
     date: date
     places: list[PoiCard] = Field(description="In visiting order.")
     busy_minutes: int = Field(description="Visits plus travel, from and back to `start`.")
-    capacity_minutes: int = Field(description="Length of the day (`day_start` to `day_end`).")
+    capacity_minutes: int = Field(
+        description="Length of the day: `day_start` to `day_end`, but from `start_at` on the "
+        "first day and until `end_at` on the last."
+    )
 
 
 class DaysResponse(BaseModel):

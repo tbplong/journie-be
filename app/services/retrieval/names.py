@@ -4,9 +4,17 @@ The SQL lookup returns up to five candidates with their best similarity over eve
 (name, English name, ASCII name, seed aliases). ``classify`` decides, without I/O, whether that
 is one clear place, several plausible ones, or nothing. It never swaps in a "similar" place.
 
-Exact matching runs on folded keys, so names differing only in accents ("Phở Hùng" /
-"Phố Hùng") both match. When the query has diacritics, hits whose accent-preserving key equals
-the query (``exact_marked``) win over folded-only ones (accent rule in text.py).
+A name matches ("exact") when a key equals the query or starts with it as whole words: the
+branch ("Katinat (Đường Hàm Nghi)") or tagline ("Thảo Cầm Viên - Sài gòn Zoo") follows the
+name, so every branch of a chain matches its bare name, while a street inside a name ("Cộng Cà
+Phê (152 Đường Chợ Lớn)" for "Chợ Lớn") or the same words in another order ("Quán Chay Chị Củ"
+for "Củ Chi") do not. Fuzzy hits use the symmetric ``similarity()``, so extra words count
+against a candidate.
+
+Name matching runs on folded keys, so names differing only in accents ("Phở Hùng" /
+"Phố Hùng") both match. When the query has diacritics, hits whose accent-preserving key matches
+the query (``exact_marked``) win over folded-only ones, and fuzzy similarity is measured on the
+accent-preserving keys (accent rule in text.py).
 """
 
 from dataclasses import dataclass
@@ -60,30 +68,44 @@ def classify(query: str, hits: list[NameHit]) -> NameMatch:
     return NameMatch(query, "ambiguous", close)
 
 
-# shortcut: similarity() over unnested name_keys cannot use an index, so every name scans every
-# recommendable place (<= 60 names per request); fine below ~20k places, beyond that pre-filter
-# with the index-backed `%` operator on a trigram index and score only the rows it keeps.
-LOOKUP_SQL = """
-SELECT p.id,
-       max(greatest(similarity(k, %(q)s), word_similarity(%(q)s, k))) AS sim,
-       bool_or(k = %(q)s) AS exact,
-       %(marked)s AND %(qv)s = ANY(p.name_keys_vi) AS exact_marked
-FROM pois p CROSS JOIN LATERAL unnest(p.name_keys) AS k
-WHERE p.recommendable
-GROUP BY p.id
-HAVING bool_or(k = %(q)s)
-    OR max(greatest(similarity(k, %(q)s), word_similarity(%(q)s, k))) >= %(floor)s
-ORDER BY exact DESC, sim DESC, p.id
+# A key equals the query or starts with it followed by a space (branch, tagline).
+NAME_MATCH = (
+    "EXISTS (SELECT 1 FROM unnest({keys}) AS k WHERE k = {q} OR starts_with(k, {q} || ' '))"
+)
+FOLDED_MATCH = NAME_MATCH.format(keys="p.name_keys", q="%(q)s")
+MARKED_MATCH = f"%(marked)s AND {NAME_MATCH.format(keys='p.name_keys_vi', q='%(qv)s')}"
+
+# shortcut: similarity() and starts_with() over unnested keys cannot use an index, so every name
+# scans every recommendable place (<= 60 names per request); fine below ~20k places, beyond that
+# pre-filter with the index-backed `%` operator on a trigram index and score only the rows it
+# keeps.
+LOOKUP_SQL = f"""
+SELECT id, sim, exact, exact_marked FROM (
+    SELECT p.id, p.name,
+           COALESCE((
+               SELECT max(similarity(k, %(qs)s))
+               FROM unnest(CASE WHEN %(marked)s THEN p.name_keys_vi ELSE p.name_keys END) AS k
+           ), 0) AS sim,
+           {FOLDED_MATCH} AS exact,
+           {MARKED_MATCH} AS exact_marked
+    FROM pois p
+    WHERE p.recommendable
+) AS scored
+WHERE exact OR sim >= %(floor)s
+ORDER BY exact_marked DESC, exact DESC, sim DESC, length(name), id
 LIMIT %(limit)s
 """
 
 
 def _key_params(query: str) -> dict[str, object]:
+    marked = any(has_diacritics(word) for word in fold_case(query).split())
     return {
         "q": norm(query),
         "qv": fold_case(query),
         # Without diacritics the query says nothing about accents: no preference.
-        "marked": any(has_diacritics(word) for word in fold_case(query).split()),
+        "marked": marked,
+        # Fuzzy similarity on the accent-preserving keys when accents were given.
+        "qs": fold_case(query) if marked else norm(query),
     }
 
 
@@ -99,16 +121,17 @@ async def lookup(conn: AsyncConnection, query: str) -> NameMatch:
     )
 
 
-# No LIMIT: a chain can have far more than LOOKUP_LIMIT branches. `@>` uses pois_name_keys_idx.
-EXACT_SQL = """
-SELECT id, %(marked)s AND %(qv)s = ANY(name_keys_vi) AS exact_marked
-FROM pois
-WHERE name_keys @> ARRAY[%(q)s]::text[]
+# No LIMIT: a chain can have far more than LOOKUP_LIMIT branches.
+EXACT_SQL = f"""
+SELECT p.id, {MARKED_MATCH} AS exact_marked
+FROM pois p
+WHERE {FOLDED_MATCH}
 """
 
 
 async def exact_ids(conn: AsyncConnection, query: str) -> list[str]:
-    """Every place whose name equals the query, under the same accent rule as ``classify``."""
+    """Every place whose name matches the query (every branch of a chain), under the same
+    accent rule as ``classify``."""
     params = _key_params(query)
     if not params["q"]:
         return []

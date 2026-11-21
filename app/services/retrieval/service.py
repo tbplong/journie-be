@@ -4,8 +4,6 @@ import hashlib
 import time
 from typing import Any
 
-from psycopg import AsyncConnection
-
 from app.schemas.extraction import Extraction
 from app.schemas.retrieval import (
     Disambiguation,
@@ -17,9 +15,11 @@ from app.schemas.retrieval import (
     RetrievalResponse,
     Section,
 )
+from app.services.extraction.processing import standard_name
 from app.services.gemini import GeminiError
 from app.services.retrieval import candidates, names, semantic
 from app.services.retrieval.config import INTEREST_MAP, KEYWORD_MAP
+from app.services.retrieval.db import Connect
 from app.services.retrieval.hours import TripWindow, check_hours, decide, trip_window
 from app.services.retrieval.interests import InterestRequest, plan_interests
 from app.services.retrieval.poi import Poi
@@ -111,7 +111,7 @@ def _page(result: SectionResult, offset: int, limit: int) -> Section:
 
 
 async def _semantic(
-    conn: AsyncConnection,
+    connect: Connect,
     requests: list[InterestRequest],
     params: dict[str, Any],
     embed: semantic.Embed | None,
@@ -119,8 +119,18 @@ async def _semantic(
     warnings: list[str],
 ) -> Closeness:
     """Add semantic hits to the free-text requests' hits (a word match keeps its evidence) and
-    return how close each one is. One embedding call for all of them (cached)."""
-    wanted = [req for req in requests if req.text is not None and not semantic.negated(req.raw)]
+    return how close each one is. One embedding call for the first MAX_QUERIES (cached); the
+    connection is borrowed only after the call returns.
+
+    A text that already names places ("phở", "bún chả") is not searched by meaning: embeddings
+    ignore the accent rule, so "phở" would find "Đông Phố"."""
+    wanted = [
+        req
+        for req in requests
+        if req.text is not None
+        and not semantic.negated(req.raw)
+        and "name" not in hits[req.key].values()
+    ][: semantic.MAX_QUERIES]
     if not wanted or embed is None:
         return {}
     queries = {req.key: semantic.QUERY_FORMAT.format(req.raw) for req in wanted}
@@ -130,25 +140,28 @@ async def _semantic(
         warnings.append("Tạm thời không tìm được theo ý nghĩa; sở thích tự do chỉ khớp theo từ")
         return {}
     closeness: Closeness = {}
-    span = 1 - semantic.SIMILARITY_MIN
-    for key, query in queries.items():
-        # One query per free-text interest (a handful per request), not per place.
-        found = await semantic.semantic_hits(conn, vectors[query], params)
-        for poi_id in found:
-            hits[key].setdefault(poi_id, "semantic")
-        closeness[key] = {i: (sim - semantic.SIMILARITY_MIN) / span for i, sim in found.items()}
+    async with connect() as conn:
+        for key, query in queries.items():
+            # One query per free-text interest (at most MAX_QUERIES), not per place.
+            found = await semantic.semantic_hits(conn, vectors[query], params)
+            for poi_id in found:
+                hits[key].setdefault(poi_id, "semantic")
+            closeness[key] = semantic.closeness(found)
     return closeness
 
 
 async def retrieve(
-    conn: AsyncConnection, request: RetrievalRequest, embed: semantic.Embed | None = None
+    connect: Connect, request: RetrievalRequest, embed: semantic.Embed | None = None
 ) -> RetrievalResponse:
-    """``embed`` turns texts into vectors for semantic search; None skips that search."""
+    """``embed`` turns texts into vectors for semantic search; None skips that search. No
+    connection is held while waiting for it."""
     started = time.perf_counter()
     extraction = request.extraction
     if is_empty(extraction):
         return _bare("empty_extraction", started, [])
-    if extraction.destination not in (None, SUPPORTED_DESTINATION):
+    # /retrieval may be called with a hand-written extraction: apply the /chat aliases too.
+    destination = extraction.destination and standard_name("destination", extraction.destination)
+    if destination not in (None, SUPPORTED_DESTINATION):
         return _bare(
             "unsupported_destination",
             started,
@@ -158,63 +171,67 @@ async def retrieve(
     if extraction.destination is None:
         warnings.append("Chưa rõ điểm đến; đang gợi ý địa điểm tại TP.HCM")
 
-    cuisines, data_version = await candidates.data_info(conn)
-    plan = plan_interests(extraction, cuisines)
-    window = trip_window(
-        extraction.start_date,
-        extraction.end_date,
-        extraction.duration_days,
-        extraction.available_start,
-        extraction.available_end,
-    )
-
-    # Names: must_visit -> pinned, preferred -> boosted, avoid -> excluded.
-    queries: list[tuple[NameField, str]] = [
-        *(("must_visit", q) for q in extraction.must_visit),
-        *(("preferred_places", q) for q in extraction.preferred_places),
-        *(("avoid", q) for q in plan.avoid.names),
-    ]
-    pinned: dict[str, float] = {}
-    preferred: set[str] = set()
-    avoid_ids: set[str] = set()
-    ambiguous: list[tuple[NameField, names.NameMatch]] = []
-    not_found: list[NotFound] = []
-    for field, query in dict.fromkeys(queries):
-        match = await names.lookup(conn, query)
-        if field == "avoid" and any(hit.exact for hit in match.hits):
-            # Every branch sharing the exact name is avoided, not just the lookup's top few.
-            avoid_ids.update(await names.exact_ids(conn, query))
-        elif match.status == "resolved":
-            hit = match.hits[0]
-            if field == "must_visit":
-                pinned.setdefault(hit.poi_id, hit.similarity)
-            elif field == "preferred_places":
-                preferred.add(hit.poi_id)
-            else:
-                avoid_ids.add(hit.poi_id)
-        elif match.status == "ambiguous":
-            ambiguous.append((field, match))
-        else:
-            not_found.append(NotFound(query=query, field=field))
-    if conflict := set(pinned) & avoid_ids:
-        warnings.append(
-            f"{len(conflict)} địa điểm vừa bắt buộc vừa cần tránh; vẫn giữ trong danh sách bắt buộc"
+    async with connect() as conn:
+        cuisines, data_version = await candidates.data_info(conn)
+        plan = plan_interests(extraction, cuisines)
+        window = trip_window(
+            extraction.start_date,
+            extraction.end_date,
+            extraction.duration_days,
+            extraction.available_start,
+            extraction.available_end,
         )
 
-    params = candidates.eligibility(plan.avoid, avoid_ids)
-    hits = {
-        req.key: await candidates.keyword_hits(conn, req, params)
-        for req in plan.requests
-        if req.group is None
-    }
-    closeness = await _semantic(conn, plan.requests, params, embed, hits, warnings)
-    group_keys = [req.group for req in plan.requests if req.group] or list(INTEREST_MAP.defaults)
+        # Names: must_visit -> pinned, preferred -> boosted, avoid -> excluded.
+        queries: list[tuple[NameField, str]] = [
+            *(("must_visit", q) for q in extraction.must_visit),
+            *(("preferred_places", q) for q in extraction.preferred_places),
+            *(("avoid", q) for q in plan.avoid.names),
+        ]
+        pinned: dict[str, float] = {}
+        preferred: set[str] = set()
+        avoid_ids: set[str] = set()
+        ambiguous: list[tuple[NameField, names.NameMatch]] = []
+        not_found: list[NotFound] = []
+        for field, query in dict.fromkeys(queries):
+            match = await names.lookup(conn, query)
+            if field == "avoid" and any(hit.exact for hit in match.hits):
+                # Every branch sharing the exact name is avoided, not just the lookup's top few.
+                avoid_ids.update(await names.exact_ids(conn, query))
+            elif match.status == "resolved":
+                hit = match.hits[0]
+                if field == "must_visit":
+                    pinned.setdefault(hit.poi_id, hit.similarity)
+                elif field == "preferred_places":
+                    preferred.add(hit.poi_id)
+                else:
+                    avoid_ids.add(hit.poi_id)
+            elif match.status == "ambiguous":
+                ambiguous.append((field, match))
+            else:
+                not_found.append(NotFound(query=query, field=field))
+        if conflict := set(pinned) & avoid_ids:
+            warnings.append(
+                f"{len(conflict)} địa điểm vừa bắt buộc vừa cần tránh;"
+                " vẫn giữ trong danh sách bắt buộc"
+            )
+
+        params = candidates.eligibility(plan.avoid, avoid_ids)
+        hits = {
+            req.key: await candidates.keyword_hits(conn, req, params)
+            for req in plan.requests
+            if req.group is None
+        }
+    closeness = await _semantic(connect, plan.requests, params, embed, hits, warnings)
+    group_keys = [req.group for req in plan.requests if req.group]
+    if not any(req.source == "interest" or req.group or hits[req.key] for req in plan.requests):
+        group_keys = list(INTEREST_MAP.defaults)  # same rule as sections.build_specs
     nodes = {node for key in group_keys for node in INTEREST_MAP.groups[key].nodes}
     hit_ids = {poi_id for found in hits.values() for poi_id in found}
-    pois = await candidates.fetch_pois(conn, nodes, hit_ids | preferred, params)
-
     card_ids = [*pinned, *request.selected_ids, *(h.poi_id for _, m in ambiguous for h in m.hits)]
-    by_id = await candidates.fetch_by_ids(conn, list(dict.fromkeys(card_ids)))
+    async with connect() as conn:
+        pois = await candidates.fetch_pois(conn, nodes, hit_ids | preferred, params)
+        by_id = await candidates.fetch_by_ids(conn, list(dict.fromkeys(card_ids)))
     anchors = [
         (poi.latitude, poi.longitude)
         for poi_id in [*pinned, *request.selected_ids]

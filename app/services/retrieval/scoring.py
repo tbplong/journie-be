@@ -30,6 +30,9 @@ MATCH = {"structured": 1.0, "name": 0.8, "category": 0.6, "text": 0.5, "semantic
 # description keeps all of it, so semantic sections are ordered by how close the text is.
 SEMANTIC_FLOOR = 0.5
 STRENGTH = {"include": 1.0, "prefer": 0.85}
+# Hits beyond the best one add this share of their match: a merged keyword or semantic hit lifts
+# a category match, a closer semantic hit by more than the explore shuffle (0.06) can undo.
+EXTRA_HIT_SHARE = 0.5
 TIER = {"A": 1.0, "B": 0.6, "C": 0.3}
 MICHELIN = {"star": 1.0, "bib_gourmand": 0.8, "selected": 0.5}
 MICHELIN_LABELS = {
@@ -51,11 +54,12 @@ class Hit:
     evidence: Evidence
     strength: Literal["include", "prefer"]
     raw: str | None = None  # set for keyword hits, shown in the reason
-    closeness: float = 1.0  # semantic hits: 0 at the similarity threshold, 1 at identical
+    closeness: float = 1.0  # semantic hits: 0 at the threshold, 1 at the query's closest place
 
 
 def match_score(hits: list[Hit]) -> float:
-    return max((_match(hit) * STRENGTH[hit.strength] for hit in hits), default=0.0)
+    values = sorted((_match(hit) * STRENGTH[hit.strength] for hit in hits), reverse=True)
+    return values[0] + EXTRA_HIT_SHARE * sum(values[1:]) if values else 0.0
 
 
 def _match(hit: Hit) -> float:

@@ -8,7 +8,8 @@ ends before closing; the tour of day d can only use day d's windows, and a pinne
 only the windows of its day.
 
 Plans are compared by, in order: places visited (must-visit first), broken travel rules
-(config/rules.yaml), day balance beyond the tolerance, total travel.
+(config/rules.yaml), day balance beyond the tolerance (the spread, then how uneven the days
+are), total travel.
 """
 
 import asyncio
@@ -17,13 +18,13 @@ import time as clock
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
+from functools import lru_cache
 from itertools import pairwise
 from pathlib import Path
 
 import httpx
 import yaml
 from fastapi import status
-from psycopg import AsyncConnection
 
 from app.core.config import Settings
 from app.core.errors import ProblemError
@@ -41,6 +42,7 @@ from app.schemas.routing import (
     Unscheduled,
 )
 from app.services.retrieval.candidates import fetch_by_ids
+from app.services.retrieval.db import Connect
 from app.services.retrieval.hours import DAY_MIN, WeeklyHours, to_minutes, weekly_intervals
 from app.services.retrieval.poi import Poi
 from app.services.retrieval.scoring import haversine_km
@@ -48,14 +50,17 @@ from app.services.routing import ils
 from app.services.routing.instance import Instance, Node, Window
 from app.services.routing.osrm import road_km
 from app.services.routing.rules import RULES
-from app.services.routing.validate import Tours, validate
+from app.services.routing.validate import Tours, tour_errors, validate
 
 ROUTING_VERSION = "routing-v2"  # v2: day balance, travel rules, pins
 DAY_S = 24 * 3600
 WALK_THRESHOLD_KM = 1.0  # agreed: walk below 1 km of road distance, ride otherwise
 WALK_KMH, RIDE_KMH = 4.5, 20.0  # agreed speeds; 20 km/h is a city-traffic motorbike average
 DETOUR_FACTOR = 1.3  # road / straight-line distance, used when OSRM gives no distance
-STALL_S = 1.0  # stop searching once the best plan has not improved for this long
+# Stop the ILS after this many shakes without a better plan (one restart cycle). A count, so the
+# plan does not depend on the server's load; the time limit stays as the backstop. On 50 real
+# places over 1-7 days, 300 shakes found the same scores in twice the time.
+STALL_SHAKES = ils.MAX_NO_IMPROVE
 VISIT_MINUTES_FILE = Path(__file__).with_name("config") / "visit_minutes.yaml"
 
 
@@ -84,14 +89,16 @@ VISIT_MINUTES = load_visit_minutes()
 def day_bounds(request: RoutingRequest) -> list[Window]:
     """(begin, end) of each trip day on the trip timeline."""
     first, last = request.start_at, request.end_at
-    days = (last.date() - first.date()).days + 1
+    days = (request.last_day - first.date()).days + 1
     day_start, day_end = to_minutes(request.day_start) * 60, to_minutes(request.day_end) * 60
+    # An end at midnight is the end of the day before (RoutingRequest.last_day).
+    last_end = _seconds(last) if last.date() == request.last_day else DAY_S
     bounds = []
     for d in range(days):
         begin = d * DAY_S + (_seconds(first) if d == 0 else day_start)
         end = d * DAY_S + day_end
         if d == days - 1:
-            end = min(end, d * DAY_S + _seconds(last))
+            end = min(end, d * DAY_S + last_end)
         bounds.append((begin, max(begin, end)))  # a day with no time left gets no visit
     return bounds
 
@@ -177,17 +184,19 @@ class Prepared:
         active = [d for d, (begin, end) in enumerate(self.instance.tours) if end > begin]
         categories = [None] + [poi.category for _, poi in self.located]
         days = [[categories[j] for j in tours[d]] for d in active]
-        return days, [self.dates[d] for d in active]
+        dates = self.dates
+        return days, [dates[d] for d in active]
 
 
 async def prepare(
-    conn: AsyncConnection,
+    connect: Connect,
     client: httpx.AsyncClient,
     settings: Settings,
     request: RoutingRequest,
 ) -> Prepared:
     started = clock.perf_counter()
-    found = await fetch_by_ids(conn, [place.id for place in request.places])
+    async with connect() as conn:  # released before OSRM and the solver
+        found = await fetch_by_ids(conn, [place.id for place in request.places])
     bounds = day_bounds(request)
     first_day = request.start_at.date()
     pinned = {pin.id: (pin.date - first_day).days for pin in request.pins}
@@ -208,7 +217,13 @@ async def prepare(
         if card.id in pinned:
             slots = tuple(w for w in slots if w[0] // DAY_S == pinned[card.id])
         if not slots:
-            reason = "closed_on_pinned_day" if card.id in pinned else "closed_on_trip_days"
+            # Open on its day(s) but not inside the traveller's hours: the day is too short.
+            whole = [(d * DAY_S, (d + 1) * DAY_S) for d in range(len(bounds))]
+            opened = windows(poi.opening_hours, service, whole, request.start_at.weekday())
+            if any(card.id not in pinned or w[0] // DAY_S == pinned[card.id] for w in opened):
+                reason = "no_time"
+            else:
+                reason = "closed_on_pinned_day" if card.id in pinned else "closed_on_trip_days"
             unscheduled.append(Unscheduled(poi=card, reason=reason))
             continue
         located.append((card, poi, service, slots))
@@ -249,43 +264,74 @@ def busy_seconds(inst: Instance, tour: list[int]) -> tuple[int, int]:
     return moving, moving + sum(inst.nodes[j].service for j in tour)
 
 
-def plan_cost(prep: Prepared) -> Callable[[Tours], tuple[int, int, int]]:
-    """(broken rules, balance points beyond the tolerance, travel seconds): lower is better."""
+def plan_cost(prep: Prepared) -> Callable[[Tours], tuple[int, int, int, int]]:
+    """(broken rules, balance points beyond the tolerance, unevenness beyond it, travel seconds):
+    lower is better. Unevenness (sum of squared deviations from the mean load) also drops when a
+    place moves to one of several empty days, which leaves the spread unchanged; within the
+    tolerance it is 0, so travel decides."""
     inst = prep.instance
     capacity = [end - begin for begin, end in inst.tours]
+    active = [d for d, length in enumerate(capacity) if length > 0]  # as in day_categories
+    categories = [None] + [poi.category for _, poi in prep.located]
 
-    def cost(tours: Tours) -> tuple[int, int, int]:
-        broken, _ = RULES.broken(*prep.day_categories(tours))
-        loads, total_travel = [], 0
-        for d, tour in enumerate(tours):
-            moving, busy = busy_seconds(inst, tour)
-            total_travel += moving
-            if capacity[d] > 0:
-                loads.append(busy / capacity[d])
+    # Per tour, cached: a trial changes one or two tours, the others are looked up.
+    @lru_cache(maxsize=65_536)
+    def day(tour: tuple[int, ...]) -> tuple[int, int, int, tuple[int, ...]]:
+        moving, busy = busy_seconds(inst, list(tour))
+        clashes = inst.clashes([list(tour)])
+        return moving, busy, clashes, RULES.counts([categories[j] for j in tour])
+
+    def cost(tours: Tours) -> tuple[int, int, int, int]:
+        days = [day(tuple(tour)) for tour in tours]
+        broken = sum(over for over, _, _ in RULES.overs([days[d][3] for d in active]))
+        broken += sum(clashes for _, _, clashes, _ in days)
+        total_travel = sum(moving for moving, _, _, _ in days)
+        loads = [days[d][1] / capacity[d] for d in active]
         spread = max(loads) - min(loads) if loads else 0.0
         beyond = max(0, math.ceil(round((spread - RULES.balance_tolerance) * 100, 6)))
-        return broken + inst.clashes(tours), beyond, total_travel
+        mean = sum(loads) / len(loads) if loads else 0.0
+        uneven = round(sum((load - mean) ** 2 for load in loads) * 10_000) if beyond else 0
+        return broken, beyond, uneven, total_travel
 
     return cost
 
 
+def pinned_start(prep: Prepared) -> Tours:
+    """Each day's pinned places in request order, where that order is feasible. /routing/days
+    lists places in visiting order, so a split sent back as pins starts from that plan."""
+    inst, first = prep.instance, prep.request.start_at.date()
+    day_of = {pin.id: (pin.date - first).days for pin in prep.request.pins}
+    tours: Tours = [[] for _ in range(inst.m)]
+    for j, (card, _) in enumerate(prep.located, start=1):
+        if card.id in day_of:
+            tours[day_of[card.id]].append(j)
+    return [[] if tour_errors(inst, tour, d) else tour for d, tour in enumerate(tours)]
+
+
 def solve(prep: Prepared, time_limit_s: float) -> Tours:
     """ILS for the most places (first keeping the no-two-food-in-a-row rule, then without it if
-    that fits more), then the balancing local search until the time limit."""
+    that fits more), then the balancing local search, alternating with inserting what still
+    fits, until nothing changes or the time limit."""
     deadline = clock.perf_counter() + time_limit_s
     ruled = prep.instance
+    start = pinned_start(prep)
 
     def score(tours: Tours) -> int:
         return sum(ruled.nodes[j].score for tour in tours for j in tour)
 
-    tours, _ = ils.solve(ruled, time_limit_s / 2, 0, STALL_S)
+    tours, _ = ils.solve(ruled, time_limit_s / 2, 0, STALL_SHAKES, start)
     used = ruled
     if score(tours) < sum(node.score for node in ruled.nodes):
         free = replace(ruled, no_adjacent=frozenset())
-        loose, _ = ils.solve(free, max(0.0, deadline - clock.perf_counter()), 0, STALL_S)
+        left = max(0.0, deadline - clock.perf_counter())
+        loose, _ = ils.solve(free, left, 0, STALL_SHAKES, start)
         if score(loose) > score(tours):
             tours, used = loose, free
-    tours = ils.rebalance(used, tours, plan_cost(prep), deadline)
+    cost = plan_cost(prep)
+    tours = ils.rebalance(used, tours, cost, deadline)
+    # Each round adds at least one place and never drops one: at most one per place.
+    while (filled := ils.fill(used, tours, cost, deadline)) != tours:
+        tours = ils.rebalance(used, filled, cost, deadline)
     check = validate(ruled, tours)
     if not check.feasible:  # never hand out a plan that misses a window or the end of a day
         raise ProblemError(
@@ -333,12 +379,12 @@ def meta(prep: Prepared, settings: Settings) -> RoutingMeta:
 
 
 async def plan(
-    conn: AsyncConnection,
+    connect: Connect,
     client: httpx.AsyncClient,
     settings: Settings,
     request: RoutingRequest,
 ) -> RoutingResponse:
-    prep = await prepare(conn, client, settings, request)
+    prep = await prepare(connect, client, settings, request)
     tours = await asyncio.to_thread(solve, prep, settings.routing_time_limit_seconds)
     inst, km = prep.instance, prep.km
     origin = datetime.combine(request.start_at.date(), time(), TRIP_TZ)
@@ -374,12 +420,12 @@ async def plan(
 
 
 async def plan_days(
-    conn: AsyncConnection,
+    connect: Connect,
     client: httpx.AsyncClient,
     settings: Settings,
     request: RoutingRequest,
 ) -> DaysResponse:
-    prep = await prepare(conn, client, settings, request)
+    prep = await prepare(connect, client, settings, request)
     tours = await asyncio.to_thread(solve, prep, settings.routing_time_limit_seconds)
     days = []
     for d, tour in enumerate(tours):

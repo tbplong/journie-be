@@ -24,23 +24,35 @@ class Rules:
         """The not_adjacent node covering this category, or "" when none does."""
         return next((node for node in self.not_adjacent if covers(node, category)), "")
 
+    def counts(self, categories: list[str | None]) -> tuple[int, ...]:
+        """One day's places under each day_max node, then under each day_spread node."""
+        nodes = (*self.day_max, *self.day_spread)
+        return tuple(sum(covers(node, c) for c in categories) for node in nodes)
+
+    def overs(self, days: list[tuple[int, ...]]) -> list[tuple[int, str, int | None]]:
+        """(excess, node, day index or None for a spread rule) of every broken rule, from the
+        ``counts`` of each day. The planner's cost calls this with cached counts."""
+        found = []
+        for k, (node, limit) in enumerate(self.day_max.items()):
+            for d, counts in enumerate(days):
+                if counts[k] > limit:
+                    found.append((counts[k] - limit, node, d))
+        for k, node in enumerate(self.day_spread, start=len(self.day_max)):
+            column = [counts[k] for counts in days]
+            over = max(column, default=0) - min(column, default=0) - 1
+            if over > 0:
+                found.append((over, node, None))
+        return found
+
     def broken(self, days: list[list[str | None]], dates: list[date]) -> tuple[int, list[str]]:
         """Excess over the day rules (0 = all kept) and a warning per broken rule, for the
         categories visited on each day."""
-        excess, warnings = 0, []
-        for node, limit in self.day_max.items():
-            for day, categories in zip(dates, days, strict=True):
-                over = sum(covers(node, c) for c in categories) - limit
-                if over > 0:
-                    excess += over
-                    warnings.append(f"day_max:{node}:{day}")
-        for node in self.day_spread:
-            counts = [sum(covers(node, c) for c in categories) for categories in days]
-            over = max(counts, default=0) - min(counts, default=0) - 1
-            if over > 0:
-                excess += over
-                warnings.append(f"day_spread:{node}")
-        return excess, warnings
+        overs = self.overs([self.counts(categories) for categories in days])
+        warnings = [
+            f"day_max:{node}:{dates[d]}" if d is not None else f"day_spread:{node}"
+            for _, node, d in overs
+        ]
+        return sum(over for over, _, _ in overs), warnings
 
 
 def load_rules(path: Path = RULES_FILE) -> Rules:

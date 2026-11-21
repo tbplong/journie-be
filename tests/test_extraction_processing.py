@@ -1,7 +1,11 @@
 from typing import Any
 
 from app.schemas.extraction import Extraction
-from app.services.extraction.processing import consistency_issues, repair_extraction
+from app.services.extraction.processing import (
+    consistency_issues,
+    repair_extraction,
+    standard_name,
+)
 
 BASE: dict[str, Any] = {
     "destination": None,
@@ -46,6 +50,11 @@ def test_destination_and_interest_aliases_are_canonicalized() -> None:
     assert repaired.interests == ["cafe"]
     assert repaired.hard_constraints[0].value == "Cần Thơ"
     assert "canonical_name" in repairs
+
+
+def test_ho_chi_minh_city_spellings_are_canonicalized() -> None:
+    for spelling in ("Hồ Chí Minh", "HCM", "Thành phố HCM", "ho chi minh city", "TP. HCM"):
+        assert standard_name("destination", spelling) == "Ho Chi Minh City", spelling
 
 
 def test_budget_cap_fills_scalar_and_conflict_sets_clarification() -> None:
@@ -129,3 +138,68 @@ def test_rejected_extraction_is_left_unchanged() -> None:
     assert repaired == rejected
     assert repairs == []
     assert consistency_issues(repaired) == []
+
+
+def test_a_budget_conflict_without_both_bounds_is_not_disproved() -> None:
+    # H1: an exact budget (atom and scalar) below a minimum is a conflict, not "proven none".
+    repaired, _ = repair_extraction(
+        extraction(
+            budget_vnd=3000000,
+            hard_constraints=[
+                atom("budget_vnd", "eq", "3000000"),
+                atom("budget_vnd", "min", "5000000"),
+            ],
+            possible_conflicts=["budget_disagreement"],
+        )
+    )
+    assert repaired.possible_conflicts == ["budget_disagreement"]
+    assert repaired.needs_clarification is True
+    # A minimum alone proves nothing either way: the declared conflict is kept.
+    only_min, _ = repair_extraction(
+        extraction(
+            hard_constraints=[atom("budget_vnd", "min", "5000000")],
+            possible_conflicts=["budget_disagreement"],
+        )
+    )
+    assert only_min.possible_conflicts == ["budget_disagreement"]
+
+
+def test_must_visit_and_avoid_match_names_like_the_alias_table() -> None:
+    # H2: the same place in another case is still a conflict.
+    repaired, _ = repair_extraction(
+        extraction(
+            must_visit=["Dinh Độc Lập"],
+            avoid=["dinh độc lập"],
+            hard_constraints=[
+                atom("must_visit", "include", "Dinh Độc Lập"),
+                atom("avoid", "exclude", "dinh độc lập"),
+            ],
+            possible_conflicts=["must_visit_avoid"],
+        )
+    )
+    assert repaired.possible_conflicts == ["must_visit_avoid"]
+    assert repaired.needs_clarification is True
+
+
+def test_a_conflict_declared_twice_is_removed_once_disproved() -> None:
+    # H3
+    repaired, _ = repair_extraction(
+        extraction(
+            must_visit=["A"],
+            avoid=["B"],
+            hard_constraints=[atom("must_visit", "include", "A"), atom("avoid", "exclude", "B")],
+            possible_conflicts=["must_visit_avoid", "must_visit_avoid"],
+        )
+    )
+    assert repaired.possible_conflicts == []
+    assert repaired.needs_clarification is False
+    assert consistency_issues(repaired) == []
+
+
+def test_a_repeated_list_entry_gets_one_atom_and_repair_is_stable() -> None:
+    # H4
+    repaired, _ = repair_extraction(extraction(must_visit=["Dinh Độc Lập", "Dinh Độc Lập"]))
+    atoms = [a for a in repaired.hard_constraints if a.field == "must_visit"]
+    assert len(atoms) == 1
+    assert not [i for i in consistency_issues(repaired) if i["code"] == "duplicate_atom"]
+    assert repair_extraction(repaired)[0] == repaired

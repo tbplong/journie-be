@@ -6,10 +6,27 @@ must be off.
 """
 
 import re
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
+from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import Settings
+
+# Borrows a connection for one block of queries: `async with connect() as conn`. Services take
+# this instead of a connection so they hold none while waiting for Gemini, OSRM or the solver.
+Connect = Callable[[], AbstractAsyncContextManager[AsyncConnection]]
+
+
+def reuse(conn: AsyncConnection) -> Connect:
+    """A Connect handing out one already open connection (tests, scripts)."""
+
+    @asynccontextmanager
+    async def connect() -> AsyncIterator[AsyncConnection]:
+        yield conn
+
+    return connect
 
 SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")  # spliced into SQL, so letters only
 

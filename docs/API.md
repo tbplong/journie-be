@@ -342,27 +342,38 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
 
 ### Kết quả được tính thế nào
 
-- **Tên** (`must_visit`, `preferred_places`, `avoid`): so khớp bằng trigram (`pg_trgm`) trên
-  tên, tên tiếng Anh, tên không dấu và tên gọi khác. Khớp chính xác đúng một nơi → chắc chắn;
-  nhiều nơi trùng tên (chuỗi cửa hàng) → `disambiguation`; khớp gần đúng ≥ 0.6 và hơn nơi thứ
-  hai ≥ 0.15 → chắc chắn; thấp hơn 0.35 → `not_found`. Với `avoid`, **mọi** chi nhánh trùng
-  tên chính xác đều bị loại.
+- **Tên** (`must_visit`, `preferred_places`, `avoid`): so trên tên, tên tiếng Anh, tên không
+  dấu và tên gọi khác. "Khớp tên" là tên bằng đúng câu hỏi hoặc **bắt đầu** bằng câu hỏi
+  (trọn từ): "Katinat" khớp mọi chi nhánh "Katinat (…)", "Thảo Cầm Viên" khớp "Thảo Cầm Viên -
+  Sài gòn Zoo…"; tên đường bên trong tên ("Chợ Lớn" trong "Cộng Cà Phê (152 Đường Chợ Lớn)")
+  hay cùng chữ khác thứ tự ("Củ Chi" / "Chị Củ") thì không. Khớp tên đúng một nơi → chắc chắn;
+  nhiều nơi (chuỗi cửa hàng) → `disambiguation`. Không khớp tên thì so gần đúng bằng trigram
+  (`pg_trgm similarity`, chữ thừa bị trừ điểm): ≥ 0.6 và hơn nơi thứ hai ≥ 0.15 → chắc chắn;
+  thấp hơn 0.35 → `not_found`. Với `avoid`, **mọi** chi nhánh khớp tên đều bị loại.
 - **Dấu tiếng Việt**: từ có dấu chỉ khớp đúng từ đó hoặc từ viết không dấu ("phở" khớp "phở"
   và "pho", không khớp "phố"). Từ gõ không dấu khớp mọi kiểu dấu.
 - **Sở thích → section**: 8 sở thích chuẩn và `nightlife` (bar, pub, quán nhậu...) ánh xạ
   vào nhánh taxonomy (`config/interest_map.v2.yaml`). Từ khoá như Michelin, chay, hải sản, món
   Nhật dùng cột có cấu trúc (`config/keyword_map.v1.yaml`). Từ khác ("phở") dùng full-text
-  search. Không có sở thích nào → mặc định `food` và `culture`. `beach` chưa có dữ liệu ở
-  TP.HCM nên có warning.
+  search. Không có sở thích nào → mặc định `food` và `culture`; một constraint `other` không ra
+  địa điểm nào (ví dụ "đi cùng trẻ em"), hay một `other eq` dạng chữ (sự thật như "budget
+  exactly 75 NZD"), không tính là sở thích. Một nơi hợp nhiều section → vào section cụ thể nhất
+  (Cà phê thay vì Ẩm thực, kể cả khi Ẩm thực là bắt buộc). `beach` chưa có dữ liệu ở TP.HCM nên
+  có warning.
 - **Sở thích tự do** (giá trị trong `interests` hoặc constraint `other` không khớp nhóm hay
-  từ khoá nào, ví dụ "quán yên tĩnh để làm việc", "chỗ có view đẹp để ngắm hoàng hôn"): ngoài
-  full-text còn được tìm **theo nghĩa**. Câu được embed bằng Gemini (`gemini-embedding-2`, 768
-  chiều) và so với embedding của tên + mô tả từng nơi (pgvector, cosine). Giữ tối đa 30 nơi có
-  độ tương đồng ≥ 0.65, xếp theo độ gần; reason là "Gợi ý theo mô tả". Câu có phủ định ("không
-  quá du lịch", "tránh chỗ ồn ào") không tìm theo nghĩa, vì embedding coi chúng gần với điều bị
-  phủ định. Gemini lỗi hoặc hết quota → chỉ full-text, kèm warning "Tạm thời không tìm được
-  theo ý nghĩa…". Mỗi request có sở thích tự do tốn 1 lần gọi embed (cache trong process), cộng
-  khoảng 0.7 giây khi chưa có trong cache.
+  từ khoá nào, và chữ của nó không khớp tên nơi nào, ví dụ "quán yên tĩnh để làm việc", "chỗ có
+  view đẹp để ngắm hoàng hôn"): ngoài full-text còn được tìm **theo nghĩa**. "phở", "bún chả"
+  khớp tên quán nên chỉ tìm theo chữ (embedding bỏ qua luật dấu, "phở" sẽ ra "Đông Phố"). Câu
+  được embed bằng Gemini (`gemini-embedding-2`, 768 chiều) và so với embedding của tên + mô tả
+  từng nơi (pgvector, cosine). Giữ 30 nơi gần nhất còn dùng được (đang mở, không bị tránh, chưa
+  chọn) có độ tương đồng ≥ 0.65, xếp theo độ gần so với nơi gần nhất của chính câu đó; reason là
+  "Gợi ý theo mô tả". Câu có phủ định ("không quá du lịch", "khong", "ko", "tránh chỗ ồn ào",
+  "don't", "without") không tìm theo nghĩa, vì embedding coi chúng gần với điều bị phủ định;
+  "không gian", "không thể bỏ lỡ", "tránh nắng" và món "chả" không phải phủ định. Gemini lỗi
+  hoặc hết quota → chỉ full-text, kèm warning "Tạm thời không tìm được theo ý nghĩa…". Mỗi
+  request tìm theo nghĩa **tối đa 5 câu**, gộp trong 1 lần gọi embed (cache trong process); mỗi
+  câu chưa có trong cache tính 1 lượt hạn mức embedding và cộng khoảng 0.7 giây. Không giữ
+  kết nối DB trong lúc chờ Gemini.
 - **Giờ mở cửa**: chỉ áp dụng khi extraction có ngày hoặc giờ. Một nơi chỉ bị **loại** khi giờ
   đáng tin (confidence medium/high, không mâu thuẫn) nói là đóng; trường hợp nghi ngờ thì giữ
   lại và gắn flag.
@@ -395,7 +406,8 @@ Luồng hai bước (người dùng duyệt việc chia ngày trước):
 2. Người dùng kéo thả giữa các ngày (chỉ vào ngày nằm trong `open_dates` của nơi đó). Muốn
    máy gợi ý lại phần còn lại: gọi lại `/routing/days` với các nơi đã chỉnh trong `pins`.
 3. Khi đã duyệt: gửi `POST /routing` với **mọi** nơi trong `pins` → lịch trình có giờ, giữ đúng
-   cách chia của người dùng.
+   cách chia của người dùng. Gửi `places` theo thứ tự `/routing/days` trả về: solver bắt đầu
+   từ thứ tự đó, nên không bỏ nơi nào `/routing/days` đã xếp được.
 
 Gọi thẳng `POST /routing` không có `pins` = để máy tự chia và xếp hết. Hướng dẫn chi tiết cho
 frontend (state kéo thả, hiển thị từng mã, trường hợp cần test): [routing-frontend.md](routing-frontend.md).
@@ -448,7 +460,8 @@ frontend (state kéo thả, hiển thị từng mã, trường hợp cần test)
 - `unscheduled.reason`: `not_found` (id không có trong DB), `no_location` (không có toạ độ),
   `closed_on_trip_days` (không có khung mở cửa nào đủ dài cho lượt tham quan trong các ngày
   của trip), `closed_on_pinned_day` (như trên, nhưng ở ngày được ghim), `no_time` (không xếp
-  vừa cùng các điểm khác).
+  vừa cùng các điểm khác, hoặc nơi mở cửa nhưng khung giờ của ngày quá ngắn cho lượt tham
+  quan).
 - `warnings`: `travel_estimated` khi một phần hoặc toàn bộ thời gian di chuyển là ước lượng
   đường chim bay × 1.3 (chưa cấu hình OSRM, OSRM lỗi, hoặc không có đường);
   `hours_unknown:<id>` khi điểm đó không có giờ mở cửa và được coi là mở cả ngày;
@@ -472,32 +485,39 @@ người dùng duyệt:
 ```
 
 - `places` theo thứ tự đi; `busy_minutes` = tham quan + di chuyển (từ `start` và về lại),
-  `capacity_minutes` = độ dài ngày. Hai số này lấy từ lịch thật, nên khớp với `POST /routing`.
+  `capacity_minutes` = độ dài ngày (`day_start` tới `day_end`, riêng ngày đầu tính từ
+  `start_at` và ngày cuối tới `end_at`). Hai số này lấy từ lịch thật, nên khớp với
+  `POST /routing`. `end_at` đúng 00:00 nghĩa là hết ngày hôm trước, không thêm một ngày 0 phút.
 - `open_dates`: các ngày mỗi nơi mở cửa đủ lâu. Frontend dùng để chặn kéo một nơi vào ngày nó
   đóng cửa mà không cần gọi API.
 
 ### Kết quả được tính thế nào
 
 - Bài toán TOPTW, giải bằng ILS (`app/services/routing/ils.py`); so sánh với OR-Tools nằm ở
-  `bench/routing/`. Sau ILS là một bước tìm kiếm cục bộ (chuyển một nơi sang chỗ khác hoặc
-  ngày khác, đổi chỗ hai nơi giữa hai ngày) để cân bằng. Hai lịch được so theo thứ tự:
+  `bench/routing/`. Sau ILS là một bước tìm kiếm cục bộ: dời dần nơi từ ngày đầy nhất sang
+  ngày vơi nhất, rồi chuyển một nơi tới mọi vị trí hợp lệ ở ngày nào cũng được (kể cả cạnh một
+  nơi cùng loại, nếu đó là bước để gỡ một vi phạm khác) hoặc đổi chỗ hai nơi giữa hai ngày; xen
+  kẽ với bước chèn lại những nơi còn vừa. Hai lịch được so theo thứ tự:
   1. xếp được nhiều nơi nhất (`must_visit_ids` trước);
   2. ít vi phạm luật du lịch nhất (`app/services/routing/config/rules.yaml`: tối đa 2 quán cà
      phê mỗi ngày, số nhà hàng giữa các ngày chênh không quá 1, hai nơi ăn uống không liền
      nhau). Luật là mềm: chỉ bị phá khi không còn cách nào, và khi đó có trong `warnings`;
   3. cân bằng: tỉ lệ bận (tham quan + di chuyển so với độ dài ngày) giữa các ngày lệch không
-     quá 15 điểm %; trong ngưỡng đó coi như cân bằng;
+     quá 15 điểm %; trong ngưỡng đó coi như cân bằng, vượt ngưỡng thì so độ lệch rồi tổng bình
+     phương độ lệch (nên còn ngày trống thì vẫn được dùng);
   4. ít di chuyển nhất (các ngày gọn theo khu).
 - Nơi trong `pins` chỉ được xếp vào đúng ngày của nó, kể cả khi làm lệch tải.
 - Khung giờ mỗi điểm = giờ mở cửa trong từng ngày của trip, cắt theo giờ của ngày đó; lượt
   tham quan phải xong trước giờ đóng cửa. Giờ qua nửa đêm được hỗ trợ.
-- Thời gian tham quan theo category: `app/services/routing/config/visit_minutes.yaml` (giá trị
-  tạm, chờ số liệu thật).
+- Thời gian tham quan theo category: `app/services/routing/config/visit_minutes.yaml`
+  (`visit-minutes-v1`, cơ sở ở `docs/visit-duration-basis.md`).
 - Di chuyển: một request OSRM `table` lấy quãng đường đường bộ N×N. Dưới 1 km đi bộ
   4.5 km/h, còn lại đi xe 20 km/h.
-- Solver dừng khi đã xếp được mọi điểm, khi lời giải không cải thiện trong 1 giây, hoặc khi hết
-  `ROUTING_TIME_LIMIT_SECONDS`. Cùng request cho cùng lịch trình (seed cố định). Lời giải được
-  kiểm tra lại bằng validator độc lập trước khi trả về.
+- ILS dừng khi đã xếp được mọi điểm hoặc sau 150 lần lắc không cải thiện (đếm lượt, không theo
+  giờ); tìm kiếm cục bộ dừng ở cực trị cục bộ. `ROUTING_TIME_LIMIT_SECONDS` chỉ là chốt an toàn.
+  Cùng request cho cùng lịch trình (seed cố định), trừ khi chạm chốt đó (request lớn trên server
+  đang bận): khi ấy lịch là lời giải tốt nhất tới lúc dừng. Lời giải được kiểm tra lại bằng
+  validator độc lập trước khi trả về.
 
 ---
 
@@ -519,7 +539,7 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 
 | Endpoint | HTTP | `type` | Khi nào | Nên làm gì |
 |---|---|---|---|---|
-| mọi endpoint POST | 422 | (dạng mặc định của FastAPI: `{"detail": [...]}`) | Body sai kiểu, thiếu field, vượt giới hạn | Sửa request, không retry |
+| mọi endpoint POST | 422 | (dạng mặc định của FastAPI: `{"detail": [...]}`; body có `NaN`/`Infinity` thì `detail` không kèm `input`) | Body sai kiểu, thiếu field, vượt giới hạn | Sửa request, không retry |
 | `/chat` | 502 | `/problems/invalid-llm-output` | Gemini trả JSON hỏng, bị cắt, hoặc bị chặn bởi bộ lọc an toàn | Có thể retry một lần |
 | `/chat` | 502 | `/problems/llm-upstream-error` | Lỗi mạng hoặc HTTP từ Gemini | Retry sau |
 | `/chat` | 503 | `/problems/llm-not-configured` | Server thiếu `GEMINI_API_KEY` | Báo người vận hành |
@@ -588,7 +608,7 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | `app/services/retrieval/config/interest_map.v2.yaml` | Sở thích → nhánh taxonomy, section mặc định |
 | `app/services/retrieval/config/keyword_map.v1.yaml` | Từ khoá → lọc theo cột (Michelin, chay, món ăn...) |
 | `app/services/retrieval/config/poi_overrides.csv` | Sửa tay category/kind sai theo id (hiện trống) |
-| `app/services/routing/config/visit_minutes.yaml` | Thời gian tham quan theo category (giá trị tạm) |
+| `app/services/routing/config/visit_minutes.yaml` | Thời gian tham quan theo category (`visit-minutes-v1`) |
 | `app/services/routing/config/rules.yaml` | Luật du lịch (cà phê mỗi ngày, rải nhà hàng, không ăn liền nhau) và ngưỡng cân bằng 15% |
 | `db/schema.sql` | Bảng `pois` và index; chạy lại an toàn |
 | `data/places_1000.parquet`, `data/taxonomy.v1.yaml` | Dữ liệu demo 1000 địa điểm và taxonomy (không deploy) |
@@ -639,7 +659,8 @@ uv run python eval/run_eval.py --schema retrieval_test
 
 ## Giới hạn đã biết
 
-- Chỉ có dữ liệu TP.HCM; bộ demo hiện có 100 địa điểm. `beach` chưa có dữ liệu.
+- Chỉ có dữ liệu TP.HCM; bộ demo `data/places_1000.parquet` có 1000 địa điểm. `beach` chưa có
+  dữ liệu.
 - `/chat` chậm (có thể vài chục giây) và tốn quota Gemini; chưa có đăng nhập hay rate limit
   trong code. Khi deploy nên bật rate limit trên Vercel Firewall cho `/chat`.
 - "Xem thêm" chạy lại toàn bộ truy vấn cho mỗi trang. Ổn với dưới khoảng 10 nghìn địa điểm
@@ -648,7 +669,7 @@ uv run python eval/run_eval.py --schema retrieval_test
   tới 5 phút.
 - `/retrieval` tin vào `extraction` client gửi lên; nó chỉ kiểm tra kiểu và giới hạn kích
   thước, không kiểm tra extraction có thật sự đến từ `/chat` hay không.
-- `/routing` tốn tới `ROUTING_TIME_LIMIT_SECONDS` CPU mỗi request (thường dưới 1 giây khi mọi
-  điểm xếp vừa) và chưa có rate limit. Thời gian tham quan là giá trị tạm. Quãng đường lấy
+- `/routing` tốn tới `ROUTING_TIME_LIMIT_SECONDS` CPU mỗi request (đo với 50 điểm: khoảng
+  3-4 giây cho 2-14 ngày) và chưa có rate limit. Không giữ kết nối DB trong lúc giải. Quãng đường lấy
   theo profile ô tô của OSRM nên chặng đi bộ có thể dài hơn thực tế ở đường một chiều; chưa
   tính kẹt xe ngoài tốc độ trung bình 20 km/h.

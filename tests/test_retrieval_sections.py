@@ -60,6 +60,16 @@ def test_poi_lands_in_one_section_the_more_specific_on_ties() -> None:
     assert sections == {"culture": ["t"], "museum": ["m"], "cafe": ["c"]}
 
 
+def test_required_broad_interest_does_not_swallow_a_preferred_narrow_one() -> None:
+    sections, _, warnings = sections_for(
+        [poi("c", "food.cafe"), poi("r")],
+        interests=["food", "cafe"],
+        hard_constraints=[{"field": "interests", "operator": "include", "value": "food"}],
+    )
+    assert sections == {"food": ["r"], "cafe": ["c"]}
+    assert not warnings
+
+
 def test_new_sub_under_a_listed_top_joins_its_interest() -> None:
     sections, _, _ = sections_for([poi("stall", "food.some_future_sub")], interests=["food"])
     assert sections == {"food": ["stall"]}
@@ -164,6 +174,19 @@ def test_no_interest_uses_default_sections() -> None:
     assert sections["culture"] == ["pagoda"]
 
 
+def test_other_facts_and_fruitless_other_atoms_keep_the_default_sections() -> None:
+    places = [poi("r"), poi("pagoda", "culture_religion.pagoda")]
+    fact = {"field": "other", "operator": "eq", "value": "budget exactly 75 NZD"}
+    assert plan_interests(extraction(hard_constraints=[fact])).requests == []
+    wish = {"field": "other", "operator": "prefer", "value": "đi cùng trẻ em"}
+    sections, _, warnings = sections_for(places, soft_constraints=[wish])
+    assert sections == {"food": ["r"], "culture": ["pagoda"]}
+    assert not warnings
+    # An `other` atom that finds places replaces the defaults, as an interest does.
+    sections, _, _ = sections_for(places, {"kw:di_cung_tre_em": {"r": "text"}}, soft_constraints=[wish])
+    assert sections == {"kw:di_cung_tre_em": ["r"]}
+
+
 def ranked(pois: list[Poi], seed: int, hits: dict | None = None, **ext: Any) -> list[str]:
     plan = plan_interests(extraction(**ext))
     results, _ = assemble(plan, {p.id: p for p in pois}, hits or {}, ANY, seed=seed)
@@ -230,6 +253,16 @@ def test_preferred_first_and_orphans_get_their_own_section() -> None:
     ]
 
 
+def test_preferred_orphan_before_other_places_does_not_crash() -> None:
+    plan = plan_interests(extraction(interests=["food"]))
+    pois = {p.id: p for p in [poi("m", "attraction.museum"), poi("a", tier="A"), poi("b")]}
+    results, _ = assemble(plan, pois, {}, ANY, preferred_ids=frozenset({"m"}))
+    assert [(r.spec.key, {i.poi.id for i in r.items}) for r in results] == [
+        ("food", {"a", "b"}),
+        ("preferred", {"m"}),
+    ]
+
+
 def test_diversity_caps_repeated_cuisine_in_window() -> None:
     plan = plan_interests(extraction(interests=["food"]))
     pois = {
@@ -284,3 +317,16 @@ def test_skipped_place_is_not_listed_and_its_neighbours_rank_first() -> None:
     ids = [i.poi.id for i in results[0].items]
     assert "p3" not in ids
     assert set(ids[:2]) == {"p2", "p4"}
+
+
+def test_semantic_hits_keep_the_closest_usable_places(monkeypatch: Any) -> None:
+    monkeypatch.setattr("app.services.retrieval.sections.SEMANTIC_KEEP", 2)
+    plan = plan_interests(extraction(interests=["quán yên tĩnh để làm việc"]))
+    key = plan.requests[0].key
+    pois = {p.id: p for p in [poi("near"), poi("picked"), poi("mid"), poi("far"), poi("word")]}
+    hits = {key: {"near": "semantic", "picked": "semantic", "mid": "semantic", "far": "semantic",
+                  "word": "text"}}  # fmt: skip
+    close = {key: {"near": 0.9, "picked": 0.8, "mid": 0.5, "far": 0.1}}
+    results, _ = assemble(plan, pois, hits, ANY, pinned_ids=frozenset({"picked"}), closeness=close)
+    # "picked" no longer takes a slot; the word hit is not a semantic hit and is always kept.
+    assert {i.poi.id for r in results for i in r.items} == {"near", "mid", "word"}

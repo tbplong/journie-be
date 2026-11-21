@@ -126,6 +126,10 @@ def plan_interests(extraction: Extraction, cuisines: dict[str, str] | None = Non
             if atom.field != "other" or atom.operator in ("exclude", "min", "max"):
                 continue
             request = request_for(atom.value, atom_strength, "other", cuisines)
+            # A free-text `other eq` states a fact (a foreign budget, next-day availability),
+            # not a wish; `eq` "michelin" still names something to look for.
+            if request and request.text is not None and atom.operator == "eq":
+                continue
             if request:
                 candidates.append(request)
 

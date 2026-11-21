@@ -5,6 +5,7 @@ before its open runs past midnight into the next day; Sunday wraps to Monday. A 
 open on a trip day if any opening interval overlaps that day's window (it need not cover it).
 """
 
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
@@ -17,12 +18,15 @@ WEEK_MIN = 7 * DAY_MIN
 WeeklyHours = dict[str, list[list[str]]]
 Interval = tuple[int, int]  # half-open [start, end) in week minutes, 0 <= start < end <= WEEK_MIN
 HoursStatus = Literal["open", "closed", "unknown"]
+HHMM = re.compile(r"(?:[01]\d|2[0-4]):[0-5]\d")  # 24:00 = end of day; int() alone takes "1_7"
 
 
 def to_minutes(hhmm: str) -> int:
+    if not HHMM.fullmatch(hhmm):
+        raise ValueError(f"Bad time {hhmm!r}")
     hours, minutes = hhmm.split(":")
     value = int(hours) * 60 + int(minutes)
-    if not 0 <= value <= DAY_MIN:
+    if value > DAY_MIN:
         raise ValueError(f"Bad time {hhmm!r}")
     return value
 

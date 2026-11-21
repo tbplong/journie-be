@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+import json
+from collections.abc import Iterator
 
 import httpx
 import pytest
@@ -9,6 +10,7 @@ from app.api.routes.retrieval import get_connection
 from app.core.config import Settings, get_settings
 from app.main import app
 from app.schemas.routing import RoutingRequest
+from app.services.retrieval.db import Connect, reuse
 from app.services.retrieval.poi import Poi
 from app.services.routing import service
 from app.services.routing.osrm import road_km
@@ -63,7 +65,7 @@ def plan(monkeypatch: pytest.MonkeyPatch, pois: list[Poi], body: RoutingRequest)
 
     async def run():
         async with httpx.AsyncClient() as client:
-            return await service.plan(None, client, SETTINGS, body)
+            return await service.plan(reuse(None), client, SETTINGS, body)  # type: ignore[arg-type]
 
     return asyncio.run(run())
 
@@ -258,8 +260,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     app.dependency_overrides.clear()
 
 
-async def no_connection() -> AsyncIterator[None]:
-    yield None
+def no_connection() -> Connect:
+    return reuse(None)  # type: ignore[arg-type]  # fake_db replaces the queries
 
 
 BODY = {
@@ -313,3 +315,48 @@ def test_visit_minutes_use_taxonomy_categories() -> None:
     from tests.test_retrieval_taxonomy import TAXONOMY
 
     assert set(service.VISIT_MINUTES.by_category) <= TAXONOMY.categories
+
+
+def test_a_trip_ending_at_midnight_has_no_extra_day() -> None:
+    body = request(["a"], "2026-11-21T08:00", "2026-11-23T00:00")
+    assert service.day_bounds(body) == [(8 * H, 21 * H), (24 * H + 8 * H, 24 * H + 21 * H)]
+    late = request(["a"], "2026-11-21T08:00", "2026-11-23T00:00", day_end="23:59")
+    assert service.day_bounds(late)[-1] == (24 * H + 8 * H, 24 * H + 23 * H + 59 * 60)
+    request(["a"], "2026-11-01T08:00", "2026-11-15T00:00")  # 14 days, not 15
+    with pytest.raises(ValueError, match="pins outside the trip dates"):
+        request(
+            ["a"], "2026-11-21T08:00", "2026-11-23T00:00", pins=[{"id": "a", "date": "2026-11-23"}]
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"start": {"lat": float("nan"), "lon": 106.7}},
+        {"start": {"lat": float("inf"), "lon": 106.7}},
+        {"start_at": "9999-12-31T20:00-05:00", "end_at": "9999-12-31T21:00-05:00"},
+        {"start_at": "0001-01-01T00:00+08:00"},
+    ],
+)
+def test_unrenderable_or_out_of_range_input_is_a_422(client: TestClient, change: dict) -> None:
+    app.dependency_overrides[get_connection] = no_connection
+    response = client.post(
+        "/routing",
+        content=json.dumps(BODY | change),  # json.dumps writes NaN and Infinity as JavaScript does
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 422
+
+
+def test_a_place_that_opens_on_a_too_short_day_has_no_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    pois = [
+        poi("noon", 0.004, hours={"sat": [["12:00", "22:00"]]}),
+        poi("shut", 0.003, hours={"mon": [["08:00", "17:00"]]}),
+    ]
+    result = plan(
+        monkeypatch, pois, request(["noon", "shut"], "2026-11-21T12:00", "2026-11-21T12:30")
+    )
+    assert [(u.poi.id, u.reason) for u in result.unscheduled] == [
+        ("noon", "no_time"),
+        ("shut", "closed_on_trip_days"),
+    ]
