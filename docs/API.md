@@ -9,6 +9,7 @@ Mã nguồn: `app/`. Schema chính xác luôn có ở `/docs` (Swagger) và `/re
 - [POST /chat](#post-chat)
 - [POST /retrieval](#post-retrieval)
 - [POST /routing](#post-routing)
+- [POST /assistant](#post-assistant)
 - [Lỗi](#lỗi)
 - [Dependency](#dependency)
 - [Chạy và thử](#chạy-và-thử)
@@ -46,7 +47,7 @@ Hãy tưởng tượng một văn phòng du lịch có hai nhân viên:
 | `GET` | `/` | Kiểm tra server sống, trả `{"Hello": "World"}` | — |
 | `GET` | `/health` | Health check, trả `{"status": "ok"}` | — |
 | `POST` | `/chat` | Câu tự do → ràng buộc chuyến đi có cấu trúc (`Extraction`) | `GEMINI_API_KEY` |
-| `POST` | `/retrieval` | `Extraction` → địa điểm ở TP.HCM, xếp hạng theo sở thích | `DATABASE_URL` |
+| `POST` | `/retrieval` | `Extraction` → địa điểm ở TP.HCM, Hà Nội, Đà Nẵng hoặc Huế, xếp hạng theo sở thích | `DATABASE_URL` |
 | `POST` | `/routing/days` | Các địa điểm đã chọn → gợi ý mỗi ngày đi đâu (để người dùng duyệt) | `DATABASE_URL` (`OSRM_URL` tùy chọn) |
 | `POST` | `/routing` | Các địa điểm đã chọn → lịch trình theo ngày, có giờ và chặng đi | `DATABASE_URL` (`OSRM_URL` tùy chọn) |
 
@@ -54,7 +55,7 @@ Hãy tưởng tượng một văn phòng du lịch có hai nhân viên:
   ([RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)), xem [Lỗi](#lỗi).
 - Không có đăng nhập, không có phiên: mỗi request độc lập, server không lưu gì về người dùng.
 - Không có tự động retry. Client tự quyết định retry khi gặp 502/503/504.
-- Hiện chỉ có dữ liệu **TP.HCM**. Điểm đến khác trả `status: "unsupported_destination"`.
+- Hiện có dữ liệu **TP.HCM, Hà Nội, Đà Nẵng và Huế**; mỗi request chỉ trả địa điểm của đúng thành phố đó. Điểm đến khác trả `status: "unsupported_destination"`.
 
 ---
 
@@ -213,7 +214,7 @@ khác nhau này để đánh dấu section `required`.
 
 ## POST /retrieval
 
-Từ `extraction` của `/chat`, trả về địa điểm ở TP.HCM. Không dùng LLM; nhanh và cho cùng kết
+Từ `extraction` của `/chat`, trả về địa điểm của thành phố được hỏi. Không dùng LLM; nhanh và cho cùng kết
 quả với cùng input và cùng dữ liệu.
 
 ### Request
@@ -255,7 +256,8 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
       "price_raw": "40,000 dong",
       "opening_hours_raw": "Mo-Su 08:00-18:00",
       "website": "https://dinhdoclap.gov.vn",
-      "phone": null
+      "phone": null,
+      "visit_minutes": 90
     }
   ],
   "disambiguation": [],
@@ -292,7 +294,7 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
   "meta": {
     "retrieval_version": "retrieval-v2",
     "interest_map_version": "interest_map.v2",
-    "keyword_map_version": "keyword_map.v1",
+    "keyword_map_version": "keyword_map.v1.2",
     "data_version": "places_1000",
     "latency_ms": 239
   }
@@ -305,19 +307,19 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
 
 | Field | Ý nghĩa |
 |---|---|
-| `status` | `ok`; `unsupported_destination` (điểm đến không phải TP.HCM); `empty_extraction` (extraction rỗng hoàn toàn). Hai trạng thái sau trả danh sách rỗng |
+| `status` | `ok`; `unsupported_destination` (điểm đến ngoài TP.HCM, Hà Nội, Đà Nẵng, Huế); `empty_extraction` (extraction rỗng hoàn toàn). Hai trạng thái sau trả danh sách rỗng |
 | `pinned` | Nơi trong `must_visit` tìm ra chắc chắn. Luôn hiển thị đầu tiên, **không** bị lọc theo giờ mở cửa |
 | `disambiguation` | Tên khớp nhiều nơi gần như ngang nhau, dạng `{query, field, candidates[]}`. Để người dùng chọn |
 | `not_found` | Tên không tìm thấy, dạng `{query, field}`. Hệ thống **không bao giờ** thay bằng một nơi "na ná" |
 | `sections` | Mỗi sở thích một section, theo thứ tự người dùng nói. Một địa điểm chỉ xuất hiện ở **một** section |
-| `warnings` | Câu tiếng Việt để hiển thị, ví dụ "Chưa rõ điểm đến; đang gợi ý địa điểm tại TP.HCM", "Không tìm thấy địa điểm cho “...”" |
+| `warnings` | Câu tiếng Việt để hiển thị, ví dụ "Chưa rõ điểm đến; đang gợi ý địa điểm tại TP.HCM", "Không tìm thấy địa điểm cho “...”", "Chưa tìm thấy địa điểm khớp “...”; đang gợi ý chung", "Không có dữ liệu cho “...” ở thành phố này", "Mỗi lần chỉ tìm theo ý nghĩa 5 sở thích tự do đầu tiên; “...” chỉ được tìm theo từ" |
 | `meta` | Phiên bản cấu hình/dữ liệu và thời gian xử lý |
 
 `Section`:
 
 | Field | Ý nghĩa |
 |---|---|
-| `key` | Id dùng cho `section` khi xem thêm. Sở thích chuẩn: `museum`, `cafe`, `food`, `park`, `nature`, `shopping`, `culture`, `beach`, `nightlife`. Từ khoá khác: `kw:<key>` (ví dụ `kw:pho`, `kw:japanese`). Nơi thích nhưng không thuộc section nào: `preferred` |
+| `key` | Id dùng cho `section` khi xem thêm. Sở thích chuẩn: `museum`, `cafe`, `food`, `park`, `nature`, `shopping`, `culture`, `beach`, `nightlife`, `temple`, `church`. Từ khoá khác: `kw:<key>` (ví dụ `kw:pho`, `kw:japanese`). Nơi thích nhưng không thuộc section nào: `preferred` |
 | `label` | Tên hiển thị tiếng Việt |
 | `required` | Người dùng nói sở thích này là bắt buộc |
 | `total_matches` | Tổng số item của section (để biết còn "xem thêm" không) |
@@ -327,7 +329,8 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
 
 `PoiCard`: `id`, `name`, `kind` (chỉ để hiển thị), `category` (taxonomy `top.sub`, ví dụ
 `food.cafe`), `ward`, `address`, `lat`, `lon`, `score`, `score_parts`, `reasons`, `flags`,
-`price_raw`, `opening_hours_raw`, `website`, `phone`.
+`price_raw`, `opening_hours_raw`, `website`, `phone`, `visit_minutes` (thời gian tham quan dự kiến,
+đúng số routing dùng để xếp giờ; xem mục routing).
 
 `flags`:
 
@@ -350,30 +353,75 @@ Request: `interests: ["cafe", "phở"]`, `must_visit: ["Dinh Độc Lập"]`,
   nhiều nơi (chuỗi cửa hàng) → `disambiguation`. Không khớp tên thì so gần đúng bằng trigram
   (`pg_trgm similarity`, chữ thừa bị trừ điểm): ≥ 0.6 và hơn nơi thứ hai ≥ 0.15 → chắc chắn;
   thấp hơn 0.35 → `not_found`. Với `avoid`, **mọi** chi nhánh khớp tên đều bị loại.
-- **Dấu tiếng Việt**: từ có dấu chỉ khớp đúng từ đó hoặc từ viết không dấu ("phở" khớp "phở"
-  và "pho", không khớp "phố"). Từ gõ không dấu khớp mọi kiểu dấu.
-- **Sở thích → section**: 8 sở thích chuẩn và `nightlife` (bar, pub, quán nhậu...) ánh xạ
-  vào nhánh taxonomy (`config/interest_map.v2.yaml`). Từ khoá như Michelin, chay, hải sản, món
-  Nhật dùng cột có cấu trúc (`config/keyword_map.v1.yaml`). Từ khác ("phở") dùng full-text
-  search. Không có sở thích nào → mặc định `food` và `culture`; một constraint `other` không ra
-  địa điểm nào (ví dụ "đi cùng trẻ em"), hay một `other eq` dạng chữ (sự thật như "budget
-  exactly 75 NZD"), không tính là sở thích. Một nơi hợp nhiều section → vào section cụ thể nhất
-  (Cà phê thay vì Ẩm thực, kể cả khi Ẩm thực là bắt buộc). `beach` chưa có dữ liệu ở TP.HCM nên
-  có warning.
-- **Sở thích tự do** (giá trị trong `interests` hoặc constraint `other` không khớp nhóm hay
-  từ khoá nào, và chữ của nó không khớp tên nơi nào, ví dụ "quán yên tĩnh để làm việc", "chỗ có
-  view đẹp để ngắm hoàng hôn"): ngoài full-text còn được tìm **theo nghĩa**. "phở", "bún chả"
-  khớp tên quán nên chỉ tìm theo chữ (embedding bỏ qua luật dấu, "phở" sẽ ra "Đông Phố"). Câu
-  được embed bằng Gemini (`gemini-embedding-2`, 768 chiều) và so với embedding của tên + mô tả
-  từng nơi (pgvector, cosine). Giữ 30 nơi gần nhất còn dùng được (đang mở, không bị tránh, chưa
-  chọn) có độ tương đồng ≥ 0.65, xếp theo độ gần so với nơi gần nhất của chính câu đó; reason là
-  "Gợi ý theo mô tả". Câu có phủ định ("không quá du lịch", "khong", "ko", "tránh chỗ ồn ào",
-  "don't", "without") không tìm theo nghĩa, vì embedding coi chúng gần với điều bị phủ định;
-  "không gian", "không thể bỏ lỡ", "tránh nắng" và món "chả" không phải phủ định. Gemini lỗi
-  hoặc hết quota → chỉ full-text, kèm warning "Tạm thời không tìm được theo ý nghĩa…". Mỗi
-  request tìm theo nghĩa **tối đa 5 câu**, gộp trong 1 lần gọi embed (cache trong process); mỗi
-  câu chưa có trong cache tính 1 lượt hạn mức embedding và cộng khoảng 0.7 giây. Không giữ
-  kết nối DB trong lúc chờ Gemini.
+- **Dấu tiếng Việt**: trong **tên**, từ có dấu khớp đúng từ đó hoặc từ viết không dấu ("phở"
+  khớp "phở" và "pho", không khớp "phố"). Trong **mô tả, cuisine, features**, từ có dấu chỉ khớp
+  đúng từ đó như được viết: "nhậu" không khớp "nhau", "chợ" không khớp "cho" (hai từ khác
+  nghĩa, mô tả viết đủ dấu). Từ gõ không dấu khớp mọi kiểu dấu ở cả hai nơi. Hai cách đặt dấu
+  thanh của vần "oa", "oe", "uy" được coi là một: "điều hoà" khớp "điều hòa", "thuỷ" khớp
+  "thủy".
+- **Sở thích → section**: 8 sở thích chuẩn, `nightlife`, `temple` (chùa, đền, miếu) và `church`
+  (nhà thờ) ánh xạ vào nhánh taxonomy (`config/interest_map.v2.yaml`); "chùa", "đền", "nhà thờ"
+  trong `avoid` bỏ cả nhóm đó, không chỉ nơi có chữ ấy trong tên. Từ khoá như Michelin, chay, hải sản, món Nhật dùng cột có cấu
+  trúc (`config/keyword_map.v1.yaml`, bản `keyword_map.v1.2`). Với bar có hai loại alias:
+  "bar", "rượu", "uống rượu", "nightlife"... chỉ cho cả nhóm `nightlife`; "pub", "bia",
+  "nhậu", "cocktail", "rượu vang", "craft beer"... cho cả nhóm **và** tìm thêm theo chữ của
+  người dùng, nên nơi khớp được đẩy lên đầu, còn nơi ngoài nhóm khớp chữ (quán "Bia hơi …",
+  quán nhậu, vốn là `food.restaurant`) thành section riêng; "đi nhậu" và "nhau" gõ không dấu
+  cũng tìm "nhậu". Có cả số nhiều và cụm tiếng Anh ("bars", "drinks", "grab a drink", "pubs",
+  "cocktails", "rooftop bars"). Kệ bar giữ mọi bar của nó: nơi khớp chữ hay khớp nghĩa chỉ được
+  đẩy lên đầu kệ, không bị kéo sang section khác, và chữ đi kèm không bao giờ có warning "Không
+  tìm thấy". Từ khác ("phở") dùng full-text.
+  Một câu không khớp nguyên câu nhưng **chứa** một alias của nhóm ("kiếm chỗ uống rượu" chứa
+  "uống rượu") thì thêm nhóm đó, cộng tìm theo chữ của cả câu; alias so như được viết (có dấu),
+  nên "bìa rừng" không phải "bia", "cùng nhau" không phải "nhậu"; phủ định đứng trước alias
+  ("không uống rượu", "tránh xa bar") và cụm như "bia tiến sĩ", "bắn bia", "đi chơi cùng nhau"
+  không được ghép nhóm, còn phủ định đứng sau alias chỉ tả nơi đó ("quán bar không ồn ào" vẫn ra
+  bar). Nhóm có dữ liệu thắng alias dài hơn của nhóm chưa có dữ liệu: "beach bar" là bar. Từ chỉ thời gian
+  ("tối nay", "ngày mai", "cuối tuần", "tonight"...) không phải sở thích: đứng một mình thì bỏ,
+  nằm trong câu dài thì bị cắt ra ("tối nay đi nhậu" → "đi nhậu").
+- **Không có sở thích**: không có sở thích nào → mặc định `food` và `culture`. Constraint
+  `other` có toán tử `eq` cũng là một ước muốn (/chat hay ghi "kiếm chỗ uống rượu" là `eq`); chỉ
+  `other eq` nêu sự thật (một số tiền "200k", một giờ "9h30", tên tiền tệ cạnh một số "75 NZD",
+  hoặc số đi cùng từ ngân sách "budget 75") là bị bỏ; "khám phá cố đô", "ăn ở quận 1" là ước
+  muốn. Khi chỉ
+  có ước muốn `other` mà không còn nơi nào để hiện thì vẫn hiện mặc định, kèm warning "Chưa tìm
+  thấy địa điểm khớp “…”; đang gợi ý chung" cho ước muốn không tìm ra nơi nào đang mở và không bị
+  tránh (câu phủ định, hoặc ước muốn mà mọi nơi đã được chọn, thì không). Một nơi hợp nhiều section →
+  vào section cụ thể nhất (Cà phê thay vì Ẩm thực, kể cả khi Ẩm thực là bắt buộc). Nhóm chưa có
+  dữ liệu (`beach` ở cả 4 thành phố) chỉ có warning "Không có dữ liệu cho “…” ở thành phố này",
+  không lấy quán tên "Biển" thay vào; câu có thêm ý ("ăn hải sản ven biển") vẫn được tìm theo
+  chữ và theo nghĩa, warning đó chỉ hiện khi không tìm ra nơi nào.
+- **Sở thích tự do** (giá trị trong `interests` hoặc constraint `other` không khớp nhóm hay từ
+  khoá nào, ví dụ "quán yên tĩnh để làm việc", "chỗ có view đẹp để ngắm hoàng hôn", và chữ đi
+  kèm một alias như "pub"): ngoài full-text còn được tìm **theo nghĩa**, trừ khi chữ đã khớp tên
+  **từ 5 nơi trở lên** ("phở", "bánh mì": embedding bỏ qua luật dấu, "phở" sẽ ra "Đông Phố");
+  một hai tên trùng ngẫu nhiên ("rượu" → nhà hàng Hầm Rượu) không tắt việc này. Câu được embed
+  bằng Gemini (`gemini-embedding-2`, 768 chiều) và so với embedding của tên + mô tả từng nơi
+  (pgvector, cosine). Giữ 30 nơi gần nhất còn dùng được (đang mở, không bị tránh, chưa chọn) có
+  độ tương đồng ≥ 0.651, xếp theo độ gần so với nơi gần nhất của chính câu đó; reason là "Gợi ý
+  theo mô tả". Ngưỡng đo lại ngày 2026-11-24 sau khi viết lại và embed lại mô tả (76 case
+  eval ở 4 thành phố, 25 câu thử), rồi đo lại sau khi sửa cách đặt section (92 case): 0.64-0.65
+  qua nhiều case nhất (88/92, không embedder 78/92); sau khi sửa câu đồ uống trong 49 mô tả bar,
+  0.6505-0.652 qua 89/92 (không embedder 79/92) nên đổi thành 0.651; thấp hơn thì lẫn nơi
+  sai loại, cao hơn thì mất "ngắm hoàng hôn" (Đà Nẵng), "trời mưa đi đâu trong nhà". Không ngưỡng
+  nào chặn được mọi câu không phải địa điểm ("đi cùng gia đình" vẫn ra quán hợp cho gia đình).
+  Các hằng số `HOME_SHARE` 0.6, `WEAK_WEIGHT` 0.3, `SEMANTIC_KEEP` 30, `SEMANTIC_NAME_HITS` 5
+  được đo lại cùng lúc và giữ nguyên (bảng ở `docs/endpoints/retrieval.md`, mục 9b). Câu có phủ
+  định ("không quá du lịch", "khong", "ko", "tránh chỗ ồn ào", "don't", "can't", "without") không
+  tìm theo nghĩa, vì embedding coi chúng gần với điều bị phủ định; "không gian", "không thể bỏ
+  lỡ", "tránh nắng", "chạng vạng" (cả "chang vang"), bia Chang và món "chả" không phải phủ
+  định. Gemini lỗi hoặc hết quota → chỉ full-text,
+  kèm warning "Tạm thời không tìm được theo ý nghĩa…". Mỗi request tìm theo nghĩa
+  **tối đa 5 câu**, gộp trong 1 lần gọi embed (cache trong process); câu thứ 6 trở đi chỉ tìm theo chữ, kèm
+  warning "Mỗi lần chỉ tìm theo ý nghĩa 5 sở thích tự do đầu tiên; …". Mỗi câu chưa có trong
+  cache tính 1 lượt hạn mức embedding và cộng khoảng 0.7 giây. Không giữ kết nối DB trong lúc
+  chờ Gemini.
+- **Nơi khớp chữ hoặc nghĩa thuộc section nào**: "nhà" của một sở thích tự do là category chiếm
+  ≥ 60% trọng số các hit (khớp tên hoặc cột có cấu trúc tính 1, chỉ khớp mô tả hoặc theo nghĩa
+  tính 0.3). Hit yếu ngoài nhà bị bỏ (một khu chợ có mô tả nhắc tới phở không phải quán phở).
+  Không có nhà thì hit yếu chỉ bị bỏ khi có từ 3 hit mạnh trở lên. Nhà nằm trong một section được
+  yêu cầu → gộp vào đó (`matched_keywords`, nơi khớp lên đầu); không thì thành section riêng mang
+  tên câu của người dùng.
 - **Giờ mở cửa**: chỉ áp dụng khi extraction có ngày hoặc giờ. Một nơi chỉ bị **loại** khi giờ
   đáng tin (confidence medium/high, không mâu thuẫn) nói là đóng; trường hợp nghi ngờ thì giữ
   lại và gắn flag.
@@ -433,7 +481,7 @@ frontend (state kéo thả, hiển thị từng mã, trường hợp cần test)
 | `must_visit_ids` | Tùy chọn. Các id trong `places` được giữ trước khi không xếp đủ |
 | `start` | Vị trí xuất phát và quay về mỗi ngày |
 | `start_at`, `end_at` | Bắt đầu và kết thúc cả trip, tối đa 14 ngày. Không có múi giờ thì hiểu là giờ Việt Nam |
-| `day_start`, `day_end` | Giờ bắt đầu các ngày 2..n và giờ kết thúc mỗi ngày (mặc định 08:00, 21:00). Ngày đầu bắt đầu từ `start_at`; ngày cuối kết thúc ở mốc sớm hơn giữa `day_end` và giờ của `end_at` |
+| `day_start`, `day_end` | Giờ bắt đầu các ngày 2..n và giờ kết thúc mỗi ngày (mặc định 08:00, 21:00). Ngày đầu bắt đầu từ `start_at`; ngày cuối kết thúc ở mốc sớm hơn giữa `day_end` và giờ của `end_at`. `day_end` sớm hơn hoặc bằng `day_start` nghĩa là **kết thúc sáng hôm sau**: xem [Ngày qua nửa đêm](#ngày-qua-nửa-đêm) |
 | `pins` | Tùy chọn. Nơi người dùng đã cố định vào một ngày (ngày trong trip, id trong `places`, không trùng). Nơi không ghim do máy chia |
 
 ### Response 200
@@ -450,11 +498,13 @@ frontend (state kéo thả, hiển thị từng mã, trường hợp cần test)
   ],
   "unscheduled": [{"poi": <PoiCard>, "reason": "closed_on_trip_days"}],
   "warnings": ["travel_estimated", "hours_unknown:<id>", "day_max:food.cafe:2026-11-20"],
-  "meta": {"routing_version": "routing-v2", "visit_minutes_version": "visit-minutes-v1",
+  "meta": {"routing_version": "routing-v2", "visit_minutes_version": "visit-minutes-v2",
            "rules_version": "rules-v1", "travel_source": "osrm", "latency_ms": 840}
 }
 ```
 
+- Ở ngày qua nửa đêm, điểm sau 00:00 có `arrive`, `start`, `leave` mang ngày lịch hôm sau
+  (ví dụ `2026-11-21T00:30`), nhưng vẫn nằm trong `days[]` của đêm đó (`date` = `2026-11-20`).
 - `leg` là chặng từ điểm trước (hoặc từ `start` với điểm đầu tiên); `return_leg` là chặng về,
   `null` với ngày không có điểm nào.
 - `unscheduled.reason`: `not_found` (id không có trong DB), `no_location` (không có toạ độ),
@@ -465,8 +515,39 @@ frontend (state kéo thả, hiển thị từng mã, trường hợp cần test)
 - `warnings`: `travel_estimated` khi một phần hoặc toàn bộ thời gian di chuyển là ước lượng
   đường chim bay × 1.3 (chưa cấu hình OSRM, OSRM lỗi, hoặc không có đường);
   `hours_unknown:<id>` khi điểm đó không có giờ mở cửa và được coi là mở cả ngày;
-  `day_max:<nhóm>:<ngày>`, `day_spread:<nhóm>`, `not_adjacent:<nhóm>:<ngày>` khi một luật du
-  lịch không giữ được vì các nơi đã chọn không cho phép (ví dụ 6 quán cà phê trong 2 ngày).
+  `day_max:<nhóm>:<ngày>`, `day_spread:<nhóm>`, `not_adjacent:<nhóm>:<ngày>`,
+  `not_before:<nhóm>:<ngày>` khi một luật du lịch không giữ được vì các nơi đã chọn không cho phép
+  (ví dụ 6 quán cà phê trong 2 ngày, hoặc 2 quán bar trong một tối: luật là tối đa 1 nơi
+  `entertainment.nightlife` mỗi ngày và bắt đầu từ 18:00).
+
+### Ngày qua nửa đêm
+
+`day_end` sớm hơn hoặc bằng `day_start` nghĩa là mỗi ngày kết thúc **sáng hôm sau**. Ví dụ
+`"day_start": "09:00", "day_end": "03:00"` là ngày 18 tiếng, từ 09:00 tới 03:00 hôm sau.
+
+- **Giới hạn** (sai thì 422, `msg` luôn nhắc `day_end`):
+  - giờ kết thúc hôm sau muộn nhất là 05:00: `day_end at or before day_start ends the next day,
+    so it must be 05:00 at the latest`;
+  - trip từ 2 ngày trở lên: khung `day_start` tới `day_end` dài tối đa 18 tiếng, để giữa hai
+    ngày còn 6 tiếng nghỉ: `the day from day_start to day_end lasts more than 18 h; ...`.
+    Giới hạn này áp dụng cho mọi khung giờ, kể cả khung trong cùng một ngày (05:00-23:30 bị từ
+    chối);
+  - mọi trip: ngày đầu, từ `start_at` tới `day_end` (trip 1 ngày: tới `end_at` nếu sớm hơn),
+    dài tối đa 20 tiếng: `the first day, from start_at to day_end, lasts more than 20 h`.
+- **`end_at` là mốc thật.** Trip 2 ngày 09:00-03:00 bắt đầu 20/11 thì gửi
+  `"end_at": "2026-11-22T03:00"`. Một `end_at` sau 00:00 và không muộn hơn `day_end` thuộc đêm
+  của ngày hôm trước, nên không thêm ngày. Mốc 00:00 đúng giữa đêm vẫn như cũ: hết ngày hôm
+  trước.
+- **Ngày không chồng nhau.** Mỗi ngày chạy từ `day_start` tới `day_end` sáng hôm sau; ngày kế
+  tiếp bắt đầu lại từ `day_start`, nên luôn sau giờ kết thúc của ngày trước.
+- **Giờ mở cửa** tính trên trục thời gian của cả tuần, nên quán mở 18:00-02:00 được ghé lúc
+  00:30. Giờ sau nửa đêm lấy theo thứ hôm sau, kể cả đêm Chủ nhật sang thứ Hai. Nơi mở tới 24:00
+  rồi mở tiếp từ 00:00 (hoặc mở 24/7) được coi là mở liền qua nửa đêm. Nơi đóng cửa lúc 00:00
+  không được xếp sau đó.
+- **Luật du lịch:** giờ sau nửa đêm vẫn là buổi tối của đêm đó. Quán bar lúc 00:30 không phạm
+  luật "từ 18:00", và `pins`, `open_dates` tính điểm lúc 00:30 vào đúng đêm đó. Khung giờ ăn
+  không đổi (06:30-09:30, 11:00-14:00, 17:30-20:30), nên bữa ăn khuya (sau 20:30) vẫn tính là
+  ngoài giờ ăn (thêm 20 phút).
 
 ### POST /routing/days
 
@@ -488,6 +569,7 @@ người dùng duyệt:
   `capacity_minutes` = độ dài ngày (`day_start` tới `day_end`, riêng ngày đầu tính từ
   `start_at` và ngày cuối tới `end_at`). Hai số này lấy từ lịch thật, nên khớp với
   `POST /routing`. `end_at` đúng 00:00 nghĩa là hết ngày hôm trước, không thêm một ngày 0 phút.
+  Ngày qua nửa đêm: 09:00-03:00 có `capacity_minutes` = 1080.
 - `open_dates`: các ngày mỗi nơi mở cửa đủ lâu. Frontend dùng để chặn kéo một nơi vào ngày nó
   đóng cửa mà không cần gọi API.
 
@@ -505,12 +587,17 @@ người dùng duyệt:
   3. cân bằng: tỉ lệ bận (tham quan + di chuyển so với độ dài ngày) giữa các ngày lệch không
      quá 15 điểm %; trong ngưỡng đó coi như cân bằng, vượt ngưỡng thì so độ lệch rồi tổng bình
      phương độ lệch (nên còn ngày trống thì vẫn được dùng);
-  4. ít di chuyển nhất (các ngày gọn theo khu).
+  4. ít thời gian mất nhất: di chuyển, chờ nơi mở cửa sau điểm đầu tiên của ngày, và mỗi bữa ăn
+     ngoài khung giờ ăn (06:30-09:30, 11:00-14:00, 17:30-20:30) tính thêm 20 phút.
 - Nơi trong `pins` chỉ được xếp vào đúng ngày của nó, kể cả khi làm lệch tải.
 - Khung giờ mỗi điểm = giờ mở cửa trong từng ngày của trip, cắt theo giờ của ngày đó; lượt
   tham quan phải xong trước giờ đóng cửa. Giờ qua nửa đêm được hỗ trợ.
-- Thời gian tham quan theo category: `app/services/routing/config/visit_minutes.yaml`
-  (`visit-minutes-v1`, cơ sở ở `docs/visit-duration-basis.md`).
+- Thời gian tham quan: `app/services/routing/config/visit_minutes.yaml` (`visit-minutes-v2`,
+  cơ sở ở `docs/visit-duration-basis.md`). Thứ tự: số riêng của nơi đó (`places`, có nguồn), kiểu
+  quán (sao Michelin 90, món nhanh 35, lẩu/nướng/buffet 75), category, rồi `default`; sau đó chặn
+  theo `max_minutes` (điểm tham quan 90, còn lại 120). Cùng hàm
+  `app/services/routing/visits.py` điền `visit_minutes` trên `PoiCard`. Trong request routing,
+  `visit_minutes` của thẻ (nếu có, 1–720) là độ dài điểm dừng, để giữ độ dài người dùng đã chỉnh.
 - Di chuyển: một request OSRM `table` lấy quãng đường đường bộ N×N. Dưới 1 km đi bộ
   4.5 km/h, còn lại đi xe 20 km/h.
 - ILS dừng khi đã xếp được mọi điểm hoặc sau 150 lần lắc không cải thiện (đếm lượt, không theo
@@ -518,6 +605,150 @@ người dùng duyệt:
   Cùng request cho cùng lịch trình (seed cố định), trừ khi chạm chốt đó (request lớn trên server
   đang bận): khi ấy lịch là lời giải tốt nhất tới lúc dừng. Lời giải được kiểm tra lại bằng
   validator độc lập trước khi trả về.
+
+---
+
+## POST /assistant
+
+Trợ lý trò chuyện Journie: trả lời câu hỏi về chuyến đi ở TP.HCM, Hà Nội, Đà Nẵng, Huế và về
+cách dùng app, bằng giọng của Journie (`app/services/assistant/voice.md`: luật giọng và câu mẫu,
+không fine-tune). Chỉ gợi ý những nơi lấy từ cơ sở dữ liệu cho câu hỏi đó; thiếu dữ liệu thì nói
+thẳng là chưa có. Cần `GEMINI_API_KEY`; `DATABASE_URL` không bắt buộc (thiếu thì trả lời không
+kèm địa điểm).
+
+### Request
+
+```json
+{
+  "messages": [
+    {"role": "user", "text": "Tối nay đi đâu uống cocktail ở Sài Gòn?"}
+  ],
+  "destination": null,
+  "trip": null,
+  "language": "vi"
+}
+```
+
+| Field | Kiểu | Ghi chú |
+|---|---|---|
+| `messages` | 1–12 mục `{role: "user" \| "assistant", text}` | Cũ trước, mới sau; mục cuối phải là `user`. `text` dài 1–1200 ký tự, không được chỉ có khoảng trắng. |
+| `destination` | `"Ho Chi Minh City"`, `"Hanoi"`, `"Da Nang"`, `"Hue"` hoặc `null` | Thành phố đang chọn trong app; `null` = TP.HCM. Câu hỏi nêu tên thành phố khác trong bốn thành phố thì lấy địa điểm của thành phố đó (xem Cách tính). |
+| `trip` | `null` hoặc `{title?, city?, days?: [{date, stops: [string]}]}` | Lịch trình đang mở, chỉ là dữ liệu tham khảo; tối đa 3000 ký tự khi viết thành JSON gọn (như `JSON.stringify`: không có dấu cách sau `,` và `:`). |
+| `language` | `"vi"` hoặc `"en"` (mặc định `"vi"`) | Ngôn ngữ của câu trả lời. |
+
+Field lạ ở bất kỳ cấp nào bị từ chối (422).
+
+### Response 200 (ví dụ thật, 2026-11-24)
+
+```json
+{
+  "reply": "Tối nay Sài Gòn có mấy quán cocktail hay ho để bạn ghé qua nè. Bạn có thể thử Xào Xạc Bar ở khu An Khánh hoặc Summer Experiment ở phường Bến Thành nha.",
+  "places": [
+    {"id": "xao-xac-bar-e5d689", "name": "Xào Xạc Bar", "category": "entertainment.nightlife", "area": "Phường An Khánh"},
+    {"id": "summer-experiment-d312a1", "name": "Summer Experiment", "category": "entertainment.nightlife", "area": "Phường Bến Thành"}
+  ],
+  "guides": [],
+  "meta": {"model": "gemini-3.5-flash-lite", "retrieved": 8, "semantic": true},
+  "destination": "Ho Chi Minh City"
+}
+```
+
+- `reply`: chữ thường, đoạn ngắn, có thể có dòng `- `; không có tiêu đề markdown, không in đậm.
+- `destination`: thành phố mà câu trả lời và các `places` thuộc về (`"Ho Chi Minh City"`,
+  `"Hanoi"`, `"Da Nang"`, `"Hue"`): `destination` của request, hoặc thành phố khác mà cuộc trò
+  chuyện hỏi tới (xem Cách tính). Client dùng nó để mở địa điểm từ đúng catalogue thành phố.
+  Field thêm sau, không bắt buộc: client cũ bỏ qua được, thiếu hoặc `null` thì coi như
+  `destination` của request.
+- `places`: chỉ những nơi đã lấy từ DB **và** được nhắc trong `reply`, theo thứ tự nhắc. Id mà
+  model tự bịa hoặc nơi model liệt kê nhưng không nhắc tới đều bị bỏ. `name` theo `language`
+  (`name_en` khi có và `language` là `en`), `area` là phường.
+- `guides`: các mục kiến thức mà câu trả lời dựa vào (`id` dạng `day_pacing/meal-times`,
+  `title` theo `language`).
+- `meta.retrieved`: số địa điểm đưa cho model; `meta.semantic`: `false` khi địa điểm đến từ tìm
+  theo từ (hoặc không có địa điểm nào).
+
+### Cách tính
+
+1. **Câu để tìm**: tin nhắn `user` cuối, ghép thêm câu hỏi `user` trước đó khi câu cuối là câu
+   hỏi tiếp: ngắn hơn 6 từ ("còn chỗ nào khác?") hoặc chỉ lại các nơi vừa nêu ("trong mấy quán
+   đó, quán nào mở sớm nhất?", "mấy chỗ bạn vừa gợi ý", "which of those", "any of them"; "quán
+   nào ... nhất" / "which one" khi câu không nêu loại nơi mới hay thành phố riêng), để tìm lại
+   được đúng các nơi đó. Câu trước cũng là câu hỏi tiếp thì ghép tiếp, tối đa 3 câu. Không tính
+   là chỉ lại (đó là câu hỏi mới): "Có quán nào ...", "Bạn gợi ý giúp mình ..." (chỉ tính khi có
+   "vừa/mới/đã", "lúc nãy" hoặc "chỗ bạn gợi ý"), "trong đó" giữa câu ("3 ngày, trong đó có một
+   ngày mưa"), "them" trơn ("take them for dinner"), "which of the ...", "Quán cà phê nào đẹp
+   nhất?". Với câu hỏi tiếp, các nơi mà câu trả lời ngay trước nêu **đủ tên** được tìm lại bằng
+   đúng câu đã dùng cho câu trả lời đó (vector đã có trong cache) và thêm vào nếu lần tìm mới
+   thiếu, nên `meta.retrieved` có thể lớn hơn 8. Đủ tên nghĩa là cả tên (hoặc tên bỏ phần trong
+   ngoặc: "Phở Bò Ấu Triệu (Phở Tư Lùn)" là "Phở Bò Ấu Triệu"); chung vài chữ ("Phở Bò Lâm" với
+   "Phở Bò Ấu Triệu") không tính, tên nằm trong một tên dài hơn mà câu trả lời nêu ("Phở Gia
+   Truyền" trong "Phở Gia Truyền Bát Đàn") cũng không.
+   **Thành phố**: thành phố mà câu hỏi cuối nêu tên (theo `name_aliases.csv`; nêu nhiều thành
+   phố thì giữ `destination` nếu nó có trong đó, không thì lấy thành phố nêu trước), rồi thành
+   phố mà các câu nó hỏi tiếp nêu gần nhất (hỏi "Ở Hà Nội ăn phở ở đâu?" rồi "Trong mấy quán đó,
+   ..." thì vẫn là Hà Nội), rồi `destination`. Câu hỏi mới không nêu tên thì về `destination`
+   (thành phố đang chọn trong app, có thể vừa đổi), dù trước đó cuộc trò chuyện nói về thành phố
+   khác. Tên trơn ("Huế", "Hà Nội") chỉ tính khi đứng đầu câu hoặc sau từ chỉ nơi chốn, đi lại,
+   yêu thích ("ở Huế", "đi Hà Nội", "thích Đà Nẵng", "tham quan Huế", cả khi gõ không dấu: "o ha
+   noi"), sau từ tìm kiếm tiếng Anh ("in Hanoi", "coffee shops Hanoi"), vì nó hay nằm trong tên
+   khác: "bún bò Huế", "phố Huế", "Nguyen Hue Street", "Lăng Chủ tịch Hồ Chí Minh", "Ho Chi Minh
+   Mausoleum". Không tính sau "từ" ("bay từ Hà Nội vào Đà Nẵng" là hỏi về Đà Nẵng), không tính
+   "quan" trơn khi gõ không dấu ("quan hue" là quán Huế). Tên chỉ đứng sau từ yêu thích hoặc
+   trước từ món ăn tiếng Anh ("I love Hue food, ... in Saigon") chỉ tính khi câu không nêu thành
+   phố nào khác theo cách trên. Tên đầy đủ ("TP Huế", "Hue City", "TP.HCM") luôn tính. Context có
+   `supported_cities` (cả bốn thành phố); hỏi về thành phố khác trong đó mà câu không nêu tên thì
+   Journie nói là có hỗ trợ và mời nêu tên thành phố hoặc chọn trong app, không nói là chưa hỗ trợ.
+2. **Địa điểm**: embed câu đó bằng Gemini với đúng định dạng và cache của tìm theo ý nghĩa
+   (`semantic.QUERY_FORMAT`, `QUERY_CACHE`), lấy 24 nơi gần nhất của thành phố trong số nơi đủ
+   điều kiện và đủ chất lượng (`ELIGIBLE`, `SUGGESTABLE`), độ tương đồng cosine ≥ 0,62 (đo ngày
+   2026-11-24: câu hỏi du lịch có nơi đứng đầu 0,71–0,78, câu ngoài lề đứng đầu 0,59), rồi chỉ giữ
+   nơi gần ngang nơi gần nhất (kém tối đa 0,06) và lấy 8 nơi điểm cao nhất: 70% độ gần (0 ở ngưỡng,
+   1 ở nơi gần nhất) cộng 30% chất lượng (`quality_score` như các mục gợi ý của chuyến: hạng, số
+   nguồn giới thiệu, Michelin, độ tin cậy). Khi có từ 3 nơi được ít nhất một nguồn giới thiệu (hoặc
+   có Michelin) cùng khớp, nơi không nguồn nào giới thiệu bị bỏ; loại nơi có ít hơn thế thì giữ, để
+   không trả lời rỗng. Tìm full-text cũng vậy: nơi trùng tên đứng trước, còn lại xếp theo độ khớp
+   chữ rồi chất lượng. Embed lỗi
+   hoặc không nơi nào đạt ngưỡng thì tìm full-text trên cùng câu (bỏ từ đệm như "đi đâu", "ở",
+   tên thành phố). DB lỗi hoặc chưa cấu hình thì vẫn trả lời, không kèm địa điểm. Chỉ đọc, không
+   ghi gì vào DB.
+3. **Độ phủ dữ liệu**: số nơi theo từng loại của thành phố (cache 5 phút), để model nói được
+   "chưa có bãi biển nào trong dữ liệu Đà Nẵng".
+4. **Kiến thức**: các file trong `app/services/assistant/knowledge/` (`journie_app.md`: cách dùng
+   app; `day_pacing.md`: giờ ăn, cà phê, nắng trưa, nghỉ trưa, buổi tối, số điểm mỗi ngày, tóm
+   tắt từ `journie-fe-main/docs/itinerary-balance-basis.md`; `visit_durations.md`: thời gian ở
+   lại, tóm tắt từ `docs/visit-duration-basis.md`). Mỗi tiêu đề `##` là một mục, embed một lần
+   mỗi process (một lần gọi batch, giữ trong bộ nhớ, không có bảng). Mỗi câu hỏi lấy 3 mục gần
+   nhất; không embed được thì xếp theo từ chung.
+5. **Trả lời**: `GeminiClient.generate_json` với schema `{reply, place_ids, guide_ids}`,
+   temperature 0,6. System prompt = `voice.md` + luật bám dữ liệu (`assistant-v4`; v4: các nơi được xếp tốt nhất trước, cùng mức phù hợp thì ưu tiên nơi đứng trước; chỉ nói "được nhiều nguồn giới thiệu" hay Michelin khi context có `recommended_by_sources` / `michelin`; v3: với câu hỏi tiếp,
+   các nơi câu trả lời trước đã nêu đủ tên có `"named_before": true` trong context; hỏi về "mấy quán
+   đó" thì trả lời về đúng các nơi đó, thiếu dữ liệu thì nói thẳng, nơi khác chỉ được gợi ý như
+   nơi mới): chỉ gợi ý nơi
+   có trong context, không bịa tên, địa chỉ, giờ, giá; chi tiết (gần đâu, giờ, giá, món) chỉ gán
+   cho nơi mà dữ liệu của chính nơi đó có; nói rõ khi thiếu dữ liệu; chỉ chuyện du lịch ở bốn
+   thành phố; trả lời bằng `language`; khoảng 120 từ trừ khi được hỏi thêm. Tin nhắn, `trip` và mô tả địa điểm nằm trong
+   khối `<context>` / `<conversation>` dạng JSON (ký tự `<`, `>` được escape), nên lệnh chèn trong
+   đó chỉ là dữ liệu.
+
+### Lỗi của /assistant
+
+Giống `/chat` (cùng `type`, `title`, header `Retry-After`), với `instance: "/assistant"`:
+
+| HTTP | `type` | Khi nào |
+|---|---|---|
+| 422 | (dạng mặc định của FastAPI) | Body sai giới hạn ở trên |
+| 429 | `/problems/rate-limited` | Quá `ASSISTANT_CLIENT_RATE_PER_MINUTE` câu mỗi phút từ một IP, hoặc `ASSISTANT_TOTAL_RATE_PER_MINUTE` câu mỗi phút cho mọi IP; có `Retry-After` (giây). Đếm mọi request, kể cả 422 |
+| 502 | `/problems/invalid-llm-output` | Gemini trả JSON hỏng, bị cắt, bị chặn, hoặc `reply` rỗng |
+| 502 | `/problems/llm-upstream-error` | Lỗi mạng hoặc HTTP từ Gemini (HTTP 500/502/503 đã được thử lại một lần sau 1,5 giây) |
+| 503 | `/problems/llm-not-configured` | Server thiếu `GEMINI_API_KEY` |
+| 503 | `/problems/llm-rate-limited` | Hết quota Gemini; có `Retry-After` |
+| 504 | `/problems/llm-timeout` | Gemini không trả lời kịp |
+
+Lỗi DB hoặc lỗi embed không thành lỗi HTTP: câu trả lời vẫn có, `meta.semantic` là `false`.
+
+Giới hạn 429 nằm trong bộ nhớ của từng process (mỗi instance serverless có bộ đếm riêng) và lấy IP
+từ kết nối: sau proxy thì chạy uvicorn với `--proxy-headers`, và vẫn nên có rule Vercel Firewall
+như `/chat`.
 
 ---
 
@@ -541,7 +772,7 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 |---|---|---|---|---|
 | mọi endpoint POST | 422 | (dạng mặc định của FastAPI: `{"detail": [...]}`; body có `NaN`/`Infinity` thì `detail` không kèm `input`) | Body sai kiểu, thiếu field, vượt giới hạn | Sửa request, không retry |
 | `/chat` | 502 | `/problems/invalid-llm-output` | Gemini trả JSON hỏng, bị cắt, hoặc bị chặn bởi bộ lọc an toàn | Có thể retry một lần |
-| `/chat` | 502 | `/problems/llm-upstream-error` | Lỗi mạng hoặc HTTP từ Gemini | Retry sau |
+| `/chat` | 502 | `/problems/llm-upstream-error` | Lỗi mạng hoặc HTTP từ Gemini (HTTP 500/502/503 đã được thử lại một lần, nếu còn ít nhất 15 giây trong `GEMINI_TIMEOUT_SECONDS`) | Retry sau |
 | `/chat` | 503 | `/problems/llm-not-configured` | Server thiếu `GEMINI_API_KEY` | Báo người vận hành |
 | `/chat` | 503 | `/problems/llm-rate-limited` | Hết quota Gemini; có header `Retry-After` | Chờ theo `Retry-After` |
 | `/chat` | 504 | `/problems/llm-timeout` | Gemini không trả lời kịp | Retry sau |
@@ -590,6 +821,8 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | `GEMINI_API_KEY2` | — | Key của account thứ hai (quota free tier riêng), chỉ dùng cho embedding |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Đổi model thì phải embed lại toàn bộ (`import_parquet.py` tự làm vì hash đổi) |
 | `GEMINI_EMBEDDING_TIMEOUT_SECONDS` | `5` | Quá thời gian thì `/retrieval` chỉ dùng full-text |
+| `ASSISTANT_CLIENT_RATE_PER_MINUTE` | `6` | Số câu `/assistant` mỗi phút cho một IP (mỗi process); quá thì 429 |
+| `ASSISTANT_TOTAL_RATE_PER_MINUTE` | `20` | Số câu `/assistant` mỗi phút cho mọi IP cộng lại, để chừa quota Gemini cho `/chat` và `/retrieval` |
 | `DATABASE_URL` | — | Bắt buộc cho `/retrieval`, ví dụ `postgresql://user:pass@host:5432/db?sslmode=require` |
 | `DATABASE_SCHEMA` | `public` | Schema chứa bảng `pois` |
 | `DATABASE_POOL_MAX_SIZE` | `3` | Số connection tối đa mỗi instance |
@@ -608,7 +841,7 @@ Dùng `type` để rẽ nhánh trong code; `detail` chỉ để đọc.
 | `app/services/retrieval/config/interest_map.v2.yaml` | Sở thích → nhánh taxonomy, section mặc định |
 | `app/services/retrieval/config/keyword_map.v1.yaml` | Từ khoá → lọc theo cột (Michelin, chay, món ăn...) |
 | `app/services/retrieval/config/poi_overrides.csv` | Sửa tay category/kind sai theo id (hiện trống) |
-| `app/services/routing/config/visit_minutes.yaml` | Thời gian tham quan theo category (`visit-minutes-v1`) |
+| `app/services/routing/config/visit_minutes.yaml` | Thời gian tham quan theo từng nơi, kiểu quán và category (`visit-minutes-v2`) |
 | `app/services/routing/config/rules.yaml` | Luật du lịch (cà phê mỗi ngày, rải nhà hàng, không ăn liền nhau) và ngưỡng cân bằng 15% |
 | `db/schema.sql` | Bảng `pois` và index; chạy lại an toàn |
 | `data/places_1000.parquet`, `data/taxonomy.v1.yaml` | Dữ liệu demo 1000 địa điểm và taxonomy (không deploy) |
@@ -659,8 +892,14 @@ uv run python eval/run_eval.py --schema retrieval_test
 
 ## Giới hạn đã biết
 
-- Chỉ có dữ liệu TP.HCM; bộ demo `data/places_1000.parquet` có 1000 địa điểm. `beach` chưa có
-  dữ liệu.
+- Chỉ có 4 thành phố: `retrieval_test` có 1.239 địa điểm (TP.HCM 925, Hà Nội 184, Đà Nẵng 70,
+  Huế 60). `beach`, spa, Cầu Rồng, Đại Nội chưa có dữ liệu.
+- Trong 92 case eval (4 thành phố), 4 case còn hỏng: "cocktail" ở TP.HCM (bar thường có câu
+  chung "uống rượu, bia hoặc cocktail" trong mô tả nên khớp chữ ngang quán cocktail), "nhậu" ở
+  Hà Nội (thứ tự giữa các quán cùng khớp chữ trong mô tả), "nhạc sống" ở TP.HCM (mô tả các bar
+  có nhạc sống chưa ghi chữ đó), "yên tĩnh" ở Huế (Tĩnh Garden Vegetarian đứng đầu vì chữ trong
+  tên). Câu dài chứa alias bar ("muốn đi nhậu với bạn bè") chỉ ra kệ bar, không ra section quán
+  nhậu. Chi tiết ở `docs/endpoints/retrieval.md`, mục 9b và "Giới hạn đã biết".
 - `/chat` chậm (có thể vài chục giây) và tốn quota Gemini; chưa có đăng nhập hay rate limit
   trong code. Khi deploy nên bật rate limit trên Vercel Firewall cho `/chat`.
 - "Xem thêm" chạy lại toàn bộ truy vấn cho mỗi trang. Ổn với dưới khoảng 10 nghìn địa điểm
