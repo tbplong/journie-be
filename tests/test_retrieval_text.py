@@ -6,6 +6,7 @@ from app.services.retrieval.text import (
     has_diacritics,
     lexeme_query,
     lexeme_vector,
+    tone_variant,
 )
 
 
@@ -51,6 +52,32 @@ def test_query_applies_the_accent_rule_per_word() -> None:
     # Mixed input: each word follows its own spelling; words must be adjacent.
     assert lexeme_query("Bánh mi") == "('bánh':A | 'banh':A) <-> 'mi':AB"
     assert lexeme_query("") is None and lexeme_query("?!") is None
+
+
+def test_strict_query_matches_an_accented_word_only_as_written() -> None:
+    # Descriptions: "nhậu" must not match "nhau" (each other), "chợ" not "cho" (for).
+    assert lexeme_query("nhậu", strict=True) == "'nhậu':A"
+    assert lexeme_query("Chợ đêm", strict=True) == "'chợ':A <-> 'đêm':A"
+    # An unaccented word carries no accent information: same as the tolerant query.
+    assert lexeme_query("pho", strict=True) == lexeme_query("pho") == "'pho':AB"
+    assert lexeme_query("Bánh mi", strict=True) == "'bánh':A <-> 'mi':AB"
+    assert lexeme_query("", strict=True) is None
+
+
+def test_tone_variant_moves_the_tone_of_a_final_oa_oe_uy() -> None:
+    # Old and new placements are both in use: "điều hòa" (16 descriptions) vs "điều hoà".
+    pairs = [("hoà", "hòa"), ("khoẻ", "khỏe"), ("thuỷ", "thủy"), ("uỷ", "ủy"), ("hoạ", "họa")]
+    for new, old in pairs:
+        assert tone_variant(new) == old and tone_variant(old) == new
+    # Fixed placements: a final consonant or vowel, qu as the consonant, a vowel mark, no tone.
+    for word in ("hoàng", "ngoài", "quý", "quà", "của", "hoằ", "hoa", "phở", "pho"):
+        assert tone_variant(word) is None, word
+
+
+def test_query_matches_both_tone_placements() -> None:
+    assert lexeme_query("điều hoà", strict=True) == "'điều':A <-> ('hoà':A | 'hòa':A)"
+    assert lexeme_query("thủy cung") == "('thủy':A | 'thuỷ':A | 'thuy':A) <-> 'cung':AB"
+    assert lexeme_query("hoang") == "'hoang':AB"
 
 
 def test_accent_exact_name_hit_wins_over_folded_only_hits() -> None:

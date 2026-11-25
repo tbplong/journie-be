@@ -3,13 +3,15 @@
 ## ELI5
 
 `/chat` đã điền xong **phiếu yêu cầu** (`extraction`). `/retrieval` là người thủ thư cầm phiếu đi
-tìm trong sổ địa điểm TP.HCM:
+tìm trong sổ địa điểm của đúng thành phố đó (TP.HCM, Hà Nội, Đà Nẵng hoặc Huế):
 
 1. **Tìm theo tên**: phiếu ghi "phải ghé Dinh Độc Lập" → tra đúng nơi đó, ghim lên đầu. Tên mơ hồ
    (nhiều nơi giống nhau) → hỏi lại "ý bạn là nơi nào?". Không thấy → báo không thấy, **không bao
    giờ tự đổi sang một nơi "na ná"**.
 2. **Tìm theo sở thích**: "thích cà phê" → lấy kệ "Cà phê". "Thích phở" không có kệ riêng → tìm
-   chữ "phở" trong tên và mô tả, rồi xếp kết quả vào kệ phù hợp nhất.
+   chữ "phở" trong tên và mô tả, rồi xếp kết quả vào kệ phù hợp nhất. Câu tự do ("chỗ có view
+   đẹp để ngắm hoàng hôn") còn được tìm **theo nghĩa**: so embedding của câu với embedding mô tả
+   từng nơi.
 3. **Gạch bỏ**: nơi cần tránh, nơi đóng cửa vào lúc người dùng rảnh.
 4. **Chấm điểm và xếp hàng**: nơi khớp tốt, mở cửa đúng giờ, gần chỗ đã chọn thì lên trước. Chất
    lượng chỉ là ngưỡng phải đạt, không phải điểm xếp hạng; các nơi phù hợp ngang nhau được xáo theo
@@ -17,7 +19,9 @@ tìm trong sổ địa điểm TP.HCM:
 5. **Giải thích**: mỗi gợi ý kèm lý do lấy từ dữ liệu ("Michelin Bib Gourmand", "Mở 06:00–22:00
    thứ Bảy"), không có câu nào do AI viết.
 
-Không có LLM ở đây. Mọi thứ là SQL và Python thuần, nên cùng một phiếu luôn cho cùng một kết quả.
+Không có LLM sinh chữ ở đây. Ngoài SQL và Python thuần chỉ có một lần gọi Gemini để embed các câu
+tự do (`semantic.py`); embedding của cùng một câu không đổi, nên cùng một phiếu cho cùng một kết
+quả. Không có embedder (thiếu key, lỗi, hết quota) thì chỉ còn tìm theo chữ.
 
 ## Hai giai đoạn: lúc import và lúc request
 
@@ -52,6 +56,8 @@ request "đọc" không thể lệch nhau.
 | [services/retrieval/candidates.py](../../app/services/retrieval/candidates.py) | Các câu SQL lấy ứng viên | Có (SQL) |
 | [services/retrieval/hours.py](../../app/services/retrieval/hours.py) | Giờ mở cửa so với lúc rảnh | Không |
 | [services/retrieval/scoring.py](../../app/services/retrieval/scoring.py) | Điểm, lý do, flag cho một địa điểm | Không |
+| [services/retrieval/semantic.py](../../app/services/retrieval/semantic.py) | Tìm theo nghĩa: định dạng câu embed, ngưỡng tương đồng, phủ định, cache câu | Có (SQL) |
+| [services/gemini.py](../../app/services/gemini.py) | Gọi Gemini (`embed_texts`, đổi key khi gặp 429) | Có (HTTP) |
 | [services/retrieval/sections.py](../../app/services/retrieval/sections.py) | Chia section, chọn section tốt nhất cho mỗi nơi, đa dạng hoá | Không |
 | [services/retrieval/text.py](../../app/services/retrieval/text.py) | Chuẩn hoá chữ, quy tắc dấu tiếng Việt, full-text | Không |
 | [services/retrieval/taxonomy.py](../../app/services/retrieval/taxonomy.py) | Cây danh mục `top.sub` và phép "node bao category" | Không |
@@ -76,7 +82,7 @@ POST /retrieval {extraction, selected_ids, section, offset, limit}
 ├─ 1. get_connection: mượn 1 kết nối từ pool ───────────────────── lỗi → 503
 │
 ├─ 2. Phiếu rỗng hoàn toàn? ──────────────────────────────────────── status=empty_extraction
-├─ 3. Điểm đến khác TP.HCM? ──────────────────────────────────────── status=unsupported_destination
+├─ 3. Điểm đến ngoài 4 thành phố? ──────────────────────────────── status=unsupported_destination
 │     (null → vẫn chạy, kèm warning "Chưa rõ điểm đến")
 │
 ├─ 4. data_info: danh sách cuisine có trong dữ liệu + data_version   [SQL, cache 5 phút]
@@ -87,6 +93,9 @@ POST /retrieval {extraction, selected_ids, section, offset, limit}
 │     → pinned / preferred / avoid_ids / ambiguous / not_found
 │
 ├─ 8. keyword_hits cho mỗi sở thích không phải kệ chuẩn               [SQL × 1–2 mỗi sở thích]
+│     (trả kết nối về pool)
+├─ 8b. _semantic: embed tối đa 5 câu tự do (1 lần gọi Gemini, cache), [Gemini × 0–1]
+│     rồi mượn lại kết nối, tìm nơi gần nghĩa cho từng câu            [SQL × số câu]
 ├─ 9. fetch_pois: mọi nơi hợp lệ thuộc các kệ + nơi khớp từ khoá      [SQL × 1]
 ├─ 10. fetch_by_ids: nơi ghim, nơi đã chọn, ứng viên disambiguation   [SQL × 1]
 │
@@ -96,7 +105,8 @@ POST /retrieval {extraction, selected_ids, section, offset, limit}
 ```
 
 **Số query mỗi request:** 1 (data_info, thường lấy từ cache) + 1 cho mỗi tên (+1 nếu là `avoid`
-khớp chính xác) + 1–2 cho mỗi sở thích không chuẩn + 2. Giới hạn list ở bước 0 giữ con số này
+khớp chính xác) + 1–2 cho mỗi sở thích không chuẩn + 1 cho mỗi câu tìm theo nghĩa (tối đa 5) + 2,
+và tối đa 1 lần gọi Gemini embed. Giới hạn list ở bước 0 giữ con số này
 có trần. Mọi query chạy **tuần tự trên một kết nối**, vì một kết nối Postgres không chạy song song
 được.
 
@@ -150,17 +160,56 @@ giữ ghim, kèm warning.
 ### 4. [interests.py](../../app/services/retrieval/interests.py): phân loại sở thích
 
 Mỗi giá trị trong `interests`, và mỗi atom `other` có toán tử `include`/`eq`/`prefer`, đi qua
-`request_for` và được xét **theo thứ tự, dừng ở bước đầu tiên khớp**:
+`wish_requests` theo thứ tự:
 
-1. **Sở thích chuẩn** (sau khi đổi alias bằng `name_aliases.csv`) và có trong `interest_map` →
-   `InterestRequest(group=...)`, tức là một kệ theo taxonomy.
-2. **Từ khoá có cấu trúc**: tên đã `norm()` là alias trong `keyword_map`, **hoặc** trùng một giá
-   trị `cuisine` đang có trong dữ liệu (`data_info`) → `InterestRequest(keyword=...)`, tức là bộ
-   lọc theo cột `michelin`/`cuisine`/`features`. Nếu keyword trỏ sang một group (ví dụ "bar" →
-   `nightlife`) thì thành kệ như bước 1.
-3. **Còn lại** → `InterestRequest(text=norm(value))`, tức là tìm chữ (full-text).
+0. **Từ chỉ thời gian** (`ignored_wishes` trong `keyword_map`: "tối nay", "ngày mai", "cuối
+   tuần", "tonight"...): cả giá trị là một từ như vậy (so sau `norm()`) → không tạo yêu cầu nào,
+   với mọi toán tử, kể cả trong `interests`.
+1. **Khớp nguyên giá trị** (`exact_requests`), dừng ở bước đầu tiên khớp:
+   1. **Sở thích chuẩn** (sau khi đổi alias bằng `name_aliases.csv`) và có trong `interest_map` →
+      `InterestRequest(group=...)`, tức là một kệ theo taxonomy.
+   2. **Từ khoá có cấu trúc**: tên đã `norm()` là alias trong `keyword_map`, **hoặc** trùng một
+      giá trị `cuisine` đang có trong dữ liệu (`data_info`) → `InterestRequest(keyword=...)`, tức
+      là bộ lọc theo cột `michelin`/`cuisine`/`features`. Keyword trỏ sang một group ("bar" →
+      `nightlife`) thì thành kệ như bước 1; nếu keyword đó có `text: true` ("pub", "bia",
+      "nhậu", nhóm `nightlife_kind`) thì thêm một yêu cầu tìm chữ đi kèm group
+      (`InterestRequest.companion`, luôn `source="other"`) cho chính chữ người dùng gõ, bỏ các từ
+      đệm đứng đầu (`filler_words`): "đi nhậu" tìm "nhậu", vì không mô tả nào viết "đi nhậu" mà
+      các quán nhậu ở Hà Nội vẫn phải có section riêng. Gõ không dấu thì tìm alias như được viết
+      (`_kind_words`): "nhau", "di nhau" tìm "nhậu", vì "nhau" không dấu khớp "cùng nhau" trong
+      mọi mô tả.
+   3. **Còn lại** → `InterestRequest(text=norm(value))`, tức là tìm chữ (full-text và theo nghĩa).
+2. Với một yêu cầu tìm chữ:
+   - `other eq` nêu **sự thật** (`is_fact`) → bỏ: một số tiền ("200k", "$75", "1.5tr"), một giờ
+     ("9h30", "20:40"), một tên tiền tệ đứng cạnh một số ("75 NZD", "2 triệu", "75 đô"; so như
+     được viết, nên "đồ" không phải "đô"), hoặc một số đi cùng từ ngân sách ("budget 75"). Tên
+     tiền tệ đứng một mình là chữ chỉ nơi chốn ("khám phá cố đô", "dạo quanh thủ đô", "khu đô
+     thị"), số đứng một mình cũng vậy ("ăn ở quận 1", "cà phê 24h"). Mọi `other eq` khác là ước
+     muốn: /chat hay ghi "kiếm chỗ uống rượu" là `eq`.
+   - Từ chỉ thời gian **nằm trong** câu bị cắt ra rồi đọc lại phần còn lại ("tối nay đi nhậu" →
+     "đi nhậu"), để section không mang tên giờ giấc.
+   - Câu **chứa** một alias của group hoặc của sở thích chuẩn (`contained_group`, so trọn từ) →
+     thêm yêu cầu group đó trước yêu cầu tìm chữ: "kiếm chỗ uống rượu" → `nightlife` + chữ "kiếm
+     chỗ uống rượu". Yêu cầu tìm chữ đó thành chữ đi kèm group (`companion`, `source="other"`
+     dù atom là `interest`): group trả lời ước muốn, nên tìm chữ không ra gì (hoặc không có
+     embedder) thì không có warning "Không tìm thấy". Phủ định **đứng trước** alias là từ chối
+     ("không uống rượu", "tránh xa bar", "don't want a bar") → không định tuyến; phủ định đứng
+     **sau** alias chỉ tả nơi đó ("quán bar không ồn ào", "quán bar ko ồn") → vẫn ra
+     `nightlife` (`semantic.first_negation`). Alias dài nhất thắng, nhưng group có dữ
+     liệu thắng alias dài hơn của group chưa có dữ liệu: "beach bar", "bar ven biển", "bia ven
+     biển" là bar, vì không có bãi biển nào để hiện. Luật dấu ở đây chặt: từ gõ có dấu phải bằng
+     đúng từ của alias như được viết, từ không dấu chỉ khớp alias có dấu khi **cả câu** không dấu
+     ("kiem cho uong ruou" vẫn chứa "uống rượu", "bìa rừng" không chứa "bia", "cùng nhau" không
+     chứa "nhậu"). Cụm trong `not_aliases` ("bia tiến sĩ", "bắn bia", "cơm rượu", "nấu rượu",
+     "cùng nhau", "với nhau"...) bị che trước khi tìm; trong câu gõ không dấu chúng che cả cách
+     viết không dấu, nên "di choi cung nhau" và "bia rung" không ra bar, còn "đi nhậu với nhau"
+     vẫn ra. Group không có node (`beach`): nếu phần còn lại của câu chỉ là từ đệm
+     (`filler_words`: "bãi biển", "đi biển", "đi tắm biển", "go to the beach") thì chỉ giữ yêu
+     cầu group và warning không có dữ liệu (quán tên "Biển" không phải bãi biển). Câu có thêm ý
+     ("ăn hải sản ven biển", "nhà hàng ven biển") vẫn tìm chữ; warning không có dữ liệu chỉ hiện
+     khi cả phần tìm chữ cũng không ra nơi nào.
 
-Ranh giới giữa bước 2 và 3 phụ thuộc **dữ liệu**: một giá trị cuisine mới xuất hiện sau lần import
+Ranh giới giữa bước 1.2 và 1.3 phụ thuộc **dữ liệu**: một giá trị cuisine mới xuất hiện sau lần import
 sẽ tự chuyển từ bước 3 sang bước 2, không cần sửa code.
 
 Các chi tiết khác:
@@ -176,6 +225,7 @@ Các chi tiết khác:
   - Bước 2 dạng bộ lọc → `avoid.filters` (ví dụ "chay" → loại nơi có cuisine chay).
   - Không khớp gì → `avoid.names`, đem đi **tra tên** chứ không tìm chữ.
 - Atom `other` hard `exclude` cũng thành luật tránh, nhưng chỉ khi nó khớp từ khoá có cấu trúc.
+  Atom `other` có toán tử `exclude`/`min`/`max` không bao giờ là ước muốn.
 
 Output thật với `interests=["cafe","phở","michelin"]`, `avoid=["bar"]`:
 
@@ -194,8 +244,20 @@ avoid: nodes={'entertainment.nightlife'}, filters=(), names=()
 - `interest_map.v2.yaml`: kệ chuẩn → danh sách node taxonomy, nhãn hiển thị, `defaults` (kệ hiển
   thị khi không có sở thích nào: `food`, `culture`), `taxonomy_gaps` (node không có trong taxonomy do lỗi
   dữ liệu đã biết; hiện trống).
-- `keyword_map.v1.yaml`: alias (đã `norm`) → bộ lọc cột hoặc group; `cuisine_labels` để hiển thị
-  lý do bằng tiếng Việt.
+- `keyword_map.v1.yaml` (bản `keyword_map.v1.2`, ghi trong `meta.keyword_map_version`): alias →
+  bộ lọc cột hoặc group. Alias được tra sau `norm()`, nhưng cũng được giữ **như được viết**
+  (`Keyword.written`) để tìm alias nằm trong câu theo luật dấu chặt, nên alias của group phải viết
+  đủ dấu. `nightlife` (bar, rượu, uống rượu...) chỉ cho cả nhóm; `nightlife_kind` (pub, bia,
+  nhậu, cocktail, rượu vang, craft beer...) cho cả nhóm và tìm thêm theo chữ (`text: true`).
+  Cả hai có dạng số nhiều và cụm tiếng Anh ("bars", "drinks", "grab a drink", "pubs",
+  "cocktails", "rooftop bars", "craft beers"), vì /chat giữ nguyên sở thích ngoài danh sách chuẩn
+  như người dùng viết.
+  `ignored_wishes`: từ chỉ thời gian, không phải sở thích (không được trùng alias nào).
+  `not_aliases`: cụm chứa alias mà nghĩa khác ("bia tiến sĩ"). `filler_words`: từ đệm một chữ
+  ("đi", "bãi", "tắm", "muốn", "go", "the"...) cho luật bãi biển ở trên và cho chữ đi kèm của
+  `text: true`. `cuisine_labels` để hiển thị lý do bằng tiếng Việt.
+- `load_interest_aliases()` đọc tên và alias của 8 sở thích chuẩn như được viết từ
+  `extraction/name_aliases.csv` (`NAME_ALIASES` bỏ khoảng trắng nên không dùng để tìm cụm từ).
 - `poi_overrides.csv`: sửa `category`/`kind` theo id, **chỉ dùng lúc import**.
 - `Group.node_for(category)`: node **sâu nhất** của kệ bao category đó. Dùng để quyết định kệ nào
   cụ thể hơn khi hai kệ cùng nhận một nơi.
@@ -246,6 +308,29 @@ avoid: nodes={'entertainment.nightlife'}, filters=(), names=()
   - "phố" chỉ sinh ra `'pho'` ở **weight B**, nên không khớp `'pho':A`. Đó chính là quy tắc dấu.
   - Query không dấu `'pho':AB` chấp nhận cả A lẫn B, nên khớp mọi kiểu dấu.
   - `<->` nghĩa là "từ kế tiếp", nên nhiều từ phải xuất hiện liền nhau như một cụm.
+- **Dạng chặt** (`lexeme_query(text, strict=True)`), dùng cho `search_lex` (mô tả, cuisine,
+  features): từ có dấu chỉ khớp chính nó như được viết, không khớp dạng viết không dấu. Output
+  thật:
+  ```
+  "nhậu"   → 'nhậu':A        (dạng thường: ('nhậu':A | 'nhau':A))
+  "chợ"    → 'chợ':A         (dạng thường: ('chợ':A | 'cho':A))
+  "phở bò" → 'phở':A <-> 'bò':A
+  "pho"    → 'pho':AB        (không dấu: như dạng thường)
+  ```
+  Tên quán hay được viết không dấu ("Pho Hoa"), nên `name_lex` giữ dạng thường. Mô tả thì viết đủ
+  dấu, và chữ không dấu trong mô tả thường là một từ khác: trong `retrieval_test` có 68 mô tả
+  TP.HCM chứa "nhau" mà chỉ 1 mô tả chứa "nhậu", 458 chứa "cho" và 26 chứa "chợ"; dạng thường
+  từng cho "nhậu" ra 35 nhà hàng và "chợ" ra 349 nơi.
+- **Hai cách đặt dấu thanh** (`tone_variant`): vần mở tận cùng bằng "oa", "oe", "uy" được viết
+  theo cả kiểu cũ lẫn kiểu mới ("hòa"/"hoà", "khỏe"/"khoẻ", "thủy"/"thuỷ"; trong mô tả có cả
+  hai). Ở cả hai dạng truy vấn, một từ có dấu khớp thêm cách đặt dấu kia; chỉ đổi phía truy vấn,
+  nên không phải dựng lại `search_lex` hay `name_lex`. Output thật:
+  ```
+  "điều hoà" (chặt) → 'điều':A <-> ('hoà':A | 'hòa':A)        16 mô tả, trước đây 0
+  "thủy cung"       → ('thủy':A | 'thuỷ':A | 'thuy':A) <-> 'cung':AB
+  ```
+  Vần có phụ âm cuối hay nguyên âm cuối ("hoàng", "ngoài"), "qu" ("quý") và vần có dấu mũ, móc
+  ("hoằ") chỉ có một cách đặt dấu nên giữ nguyên.
 
 ### 8. [names.py](../../app/services/retrieval/names.py): tra tên
 
@@ -300,8 +385,9 @@ không dùng được GIN index nên quét mọi nơi, như `LOOKUP_SQL`.
     `&&` là "hai mảng có phần tử chung"). Bằng chứng `structured`.
   - Sở thích tìm chữ (hoặc keyword có `text: true`, ví dụ "bánh mì") → `TEXT_SQL`. Tìm bằng
     **chữ gốc người dùng gõ** (`request.raw`), không phải chữ đã bỏ dấu, để giữ quy tắc dấu. Khớp
-    trong tên (`name_lex`, hoặc `word_similarity` ≥ 0.8 trên tên giữ dấu để chịu lỗi gõ) → bằng
-    chứng `name`; chỉ khớp ở cuisine/features/mô tả (`search_lex`) → bằng chứng `text`.
+    trong tên (`name_lex` với dạng thường, hoặc `word_similarity` ≥ 0.8 trên tên giữ dấu để chịu
+    lỗi gõ) → bằng chứng `name`; chỉ khớp ở cuisine/features/mô tả (`search_lex` với **dạng
+    chặt**, xem text.py) → bằng chứng `text`.
   - Một nơi khớp cả hai cách thì giữ bằng chứng mạnh hơn (`structured` được ghi trước).
 - **`fetch_pois`**: lấy mọi nơi hợp lệ thuộc các node của kệ được yêu cầu, cộng các id khớp từ khoá
   và id `preferred`. Đọc đúng các cột trong `POI_COLUMNS`, đổi thành `Poi`.
@@ -309,6 +395,149 @@ không dùng được GIN index nên quét mọi nơi, như `LOOKUP_SQL`.
   thì luôn hiện, kể cả khi bị đánh dấu không gợi ý.
 - **`data_info`**: một query lấy danh sách cuisine riêng biệt và `data_version`, cache trong biến
   module 5 phút. Hai giá trị này chỉ đổi khi import lại.
+
+### 9b. [semantic.py](../../app/services/retrieval/semantic.py): tìm theo nghĩa
+
+`service._semantic` chạy sau `keyword_hits`, cho các yêu cầu tìm chữ (`InterestRequest.text`):
+
+- **Bỏ qua** câu có phủ định (`negated`: "không", "chẳng", "đừng", "tránh", "khong", "chang",
+  "ko", "no", "not", "without", "don't", "can't", "won't"...; trừ "không gian", "không khí",
+  "không thể bỏ lỡ", "tránh nắng", "chạng vạng" (cả khi gõ "chang vang") và bia Chang), vì
+  embedding của "không quá du lịch" nằm cạnh "du lịch". Chữ đi kèm group của "quán bar không ồn
+  ào" cũng bị bỏ qua ở bước này; kệ bar vẫn trả lời ước muốn. Bỏ qua câu
+  mà chữ đã khớp tên từ `SEMANTIC_NAME_HITS` nơi trở lên ("phở", "bánh mì"): embedding bỏ qua luật
+  dấu.
+- Chỉ `MAX_QUERIES` câu đầu được tìm theo nghĩa; các câu sau chỉ tìm theo chữ, kèm warning "Mỗi
+  lần chỉ tìm theo ý nghĩa 5 sở thích tự do đầu tiên; “…” chỉ được tìm theo từ" (không báo
+  "Không tìm thấy" cho chúng).
+- Các câu chưa có trong `QUERY_CACHE` (LRU 512 câu mỗi process) được embed trong **một** lần gọi
+  Gemini, dạng `task: search result | query: <câu>`. Không giữ kết nối DB trong lúc chờ. Gemini
+  lỗi → warning "Tạm thời không tìm được theo ý nghĩa; sở thích tự do chỉ khớp theo từ".
+- `SEMANTIC_SQL`: `FETCH_K` nơi hợp lệ gần nhất theo cosine (pgvector), giữ nơi có độ tương đồng
+  ≥ `SIMILARITY_MIN`. Nơi đã có hit chữ giữ bằng chứng chữ; nơi mới có bằng chứng `semantic`
+  (reason "Gợi ý theo mô tả"). `closeness` quy độ tương đồng về 0..1 giữa `SIMILARITY_MIN` và nơi
+  gần nhất của chính câu đó, để xếp thứ tự.
+- Mỗi nơi được embed lúc import dưới dạng `title: <tên> | text: <mô tả>`; `embedding_hash` đổi khi
+  chữ, model hoặc số chiều đổi, và chỉ những dòng đó được embed lại.
+
+| Hằng số | Giá trị | Ý nghĩa |
+|---|---|---|
+| `SIMILARITY_MIN` | 0.651 | Độ tương đồng tối thiểu của một hit theo nghĩa |
+| `SEMANTIC_NAME_HITS` | 5 | Số nơi khớp tên làm tắt tìm theo nghĩa |
+| `MAX_QUERIES` | 5 | Số câu tìm theo nghĩa mỗi request |
+| `FETCH_K` | 120 (`SEMANTIC_KEEP` × 4) | Số nơi gần nhất lấy về trước các bộ lọc giờ, tránh, đã chọn |
+| `QUERY_CACHE_SIZE` | 512 | Số câu giữ embedding trong mỗi process |
+
+**Cách chọn `SIMILARITY_MIN`** (đo lại ngày 2026-11-24 trên `retrieval_test` sau khi viết lại và
+embed lại mô tả: 437 dòng đổi so với trước, lần sửa cuối 25 dòng; lần đo đầu với `keyword_map.v1.1`):
+`eval/run_eval.py --similarities` in 40 nơi gần nhất của mọi câu tự do trong 76 case eval (4
+thành phố; 40 câu), cộng 25 câu thử. Trong 12 câu thử gốc chỉ 8 câu còn ghi lại được: 5 ước muốn
+địa điểm `semantic-*`, "đi một mình", "cuối tuần", "đi cùng trẻ em"; cả 8 đều nằm trong tập đo.
+Chạy lại eval với các ngưỡng 0.60-0.70 trên cùng vector (vector câu được cache; lần chạy trực tiếp
+bằng `--similarities` cho đúng cùng thứ tự và độ tương đồng):
+
+| Ngưỡng | Case qua (76) | Ghi chú |
+|---|---|---|
+| 0.60 | 67 | như 0.62, thêm mất "rooftop bar" (TP.HCM: Chạng Vạng không vào 5 nơi đầu) |
+| 0.62-0.63 | 68 | "chỗ cho trẻ em" mất Đầm Sen khỏi 5 nơi đầu; "nhạc sống" (TP.HCM): 7 trong 8 nơi gần nhất là karaoke, công viên, quán cà phê |
+| 0.64-0.645 | 69 | như 0.65 nhưng lẫn thêm nơi sai ("nhạc sống" ra karaoke, "sống ảo chụp ảnh" 2-6 nơi sai) |
+| **0.65** | **69** | nơi thứ ba của "ngắm hoàng hôn" (Đà Nẵng, Marine Sky Bar) ở 0.652 |
+| 0.655-0.66 | 67 | mất "ngắm hoàng hôn" (còn 2 rooftop bar), "trời mưa đi đâu trong nhà"; 0.66 được "uống rượu với bạn bè" (Hà Nội) nhưng mất cả "chỗ cho trẻ em" |
+| 0.67-0.68 | 69 | được hai câu uống rượu ở Hà Nội, nhưng mất "ngắm hoàng hôn" và "chỗ cho trẻ em" (0.68) hoặc các bar Huế (0.67) |
+| 0.70 | 65 | mất thêm "nhậu", "pub", "rooftop bar" (TP.HCM) và "lịch sử chiến tranh" |
+
+Câu thử gốc ở 0.65: 5 ước muốn địa điểm có nơi gần nhất ở 0.684-0.759 và giữ 5-39 nơi đúng; "đi
+một mình" (0.648) không có nơi nào trên ngưỡng; "đi cùng trẻ em" (0.716) vẫn có 20 nơi (gần nhất
+là The Snap Cafe "hợp với gia đình có trẻ nhỏ", Estella, Đầm Sen); "cuối tuần" giờ là
+`ignored_wishes`.
+
+Giữ 0.65. Không ngưỡng nào chặn được hết câu không phải địa điểm: "đi cùng bạn bè" (0.712), "đi
+cùng gia đình" (0.707), "lần đầu đến Sài Gòn" (0.723) gần hơn nơi tốt nhất của "yên tĩnh" (0.689)
+hay "lịch sử chiến tranh" (0.684); chúng ra một section mang tên câu (King Beer 85, Karaoke Gia
+Đình; nơi nổi tiếng). Từ chỉ thời gian thì đưa vào `ignored_wishes` ("cuối tuần" khớp nhà hàng
+Wknd ở 0.742). Hai ngưỡng theo nguồn (`interest` / `other`) không giúp, vì cả ước muốn địa điểm
+lẫn câu không phải địa điểm đều đến dưới dạng atom `other`. Lần đo này cũng cho thấy chữ đi kèm
+group không phải chuyện ngưỡng: ngưỡng chỉ đổi việc hit rải rác của câu đó có "nhà" hay không, nên
+chỗ sửa là cách đặt section (mục 12b), làm ngay sau đó.
+
+**Đo lại sau khi sửa cách đặt section** (cùng ngày, `keyword_map.v1.2`, 92 case: 76 case trên
+cộng 16 case cho các lỗi đã sửa, gồm "kiếm chỗ uống rượu" `eq` và "chỗ uống rượu" `prefer` ở Hà
+Nội, Huế, Đà Nẵng, các case không embedder ở ba thành phố kia, "quán bar không ồn ào", "ăn hải
+sản ven biển", "khám phá cố đô", "ngam chang vang tren cao"). Vector câu lấy lại từ các lần gọi
+Gemini trước (cùng câu, cùng model), nên không tốn quota; kết quả ở
+`eval/results/2026-11-24-after.txt` và `-after-nosemantic.txt`:
+
+| Ngưỡng | Case qua (92) | Ghi chú |
+|---|---|---|
+| 0.60 | 85 | mất "rooftop bar" (TP.HCM), "chỗ cho trẻ em", "khám phá cố đô" (dưới 5 di tích, bảo tàng, chùa trong 8 nơi đầu) |
+| 0.62-0.63 | 86 | như 0.60 nhưng giữ "rooftop bar" |
+| **0.64-0.65** | **88** | |
+| 0.655 | 86 | mất "trời mưa đi đâu trong nhà", "ngắm hoàng hôn" (Đà Nẵng) |
+| 0.66 | 85 | như 0.655, mất thêm "chỗ cho trẻ em" |
+| 0.67-0.68 | 85-84 | mất "ngắm hoàng hôn", "khám phá cố đô", "ngam chang vang tren cao" (0.68 cả "chỗ cho trẻ em") |
+| 0.70 | 83 | qua "yên tĩnh" (Huế) nhưng mất thêm "craft beer", "lịch sử chiến tranh" |
+
+Giữ 0.65 (mức cao nhất của dải tốt nhất). Không embedder (`--no-semantic`): 78/92; các case hỏng
+thêm đều là case chỉ tìm theo nghĩa được ("ngắm hoàng hôn", "khám phá cố đô", "chỗ cho trẻ em"...)
+hoặc chỉ đổi thứ tự trong kệ bar ("rooftop bar" và "craft beer" ở TP.HCM, rooftop bar ở Đà
+Nẵng); mọi câu uống rượu vẫn ra đủ bar của thành phố, không có warning "Không tìm thấy" (R3).
+
+**Đo lại sau khi sửa câu đồ uống trong mô tả bar** (cùng ngày): 49 mô tả bar bỏ câu chung "uống
+rượu, bia hoặc cocktail" (nay là "uống rượu hoặc bia", và câu cocktail, rượu vang hay bia chỉ khi
+chữ của chính dòng nói vậy), rồi `import_parquet.py --only description` và embed lại 49 dòng đó.
+Ở 0.65: "cocktail" (TP.HCM) qua, nhưng Home Bar Là Nhà đi từ 0.643 lên 0.6504 với "trời mưa đi
+đâu trong nhà" nên lọt vào section đó (case rain-hcm hỏng). Đo lại 0.65-0.653:
+
+| Ngưỡng | Case qua (92) | Ghi chú |
+|---|---|---|
+| 0.65 | 88 | được "cocktail", mất "trời mưa đi đâu trong nhà" |
+| **0.6505-0.652** | **89** | P@5 0.398 và nDCG@5 0.449 như 0.65 (0.652: 0.394 / 0.447) |
+| 0.653 | 88 | mất nơi thứ ba của "ngắm hoàng hôn" (Đà Nẵng) |
+
+Đổi thành 0.651 (cách Home Bar Là Nhà 0.0006, cách nơi thứ ba của "ngắm hoàng hôn" 0.001). Không
+embedder: 79/92, chỉ thêm "cocktail". Ngoài eval, trong 54 câu đã cache vector chỉ có hai câu mất
+nơi gần nhất của thành phố: "chỗ vui chơi cho trẻ em" ở Huế mất nơi duy nhất (Bảo tàng Thiên
+nhiên Duyên hải miền Trung, 0.6504) và "chỗ cho trẻ em" ở Huế mất Spice Viet (một nhà hàng,
+0.6507). Kết quả ở `eval/results/2026-11-24-after-i8.txt` và `-after-i8-nosemantic.txt`.
+
+Các hằng số khác, ở 0.65 trên 92 case (giữ nguyên tất cả: 0.6, 0.3, 30, 5):
+
+| Hằng số | Giá trị thử → case qua (hiện tại: 88) |
+|---|---|
+| `HOME_SHARE` 0.6 | 0.45, 0.5, 0.55 → 87 ("chỗ cho trẻ em" có nhà là đồ ăn, mất Đầm Sen); 0.65, 0.7 → 88, không đổi case nào |
+| `WEAK_WEIGHT` 0.3 | 0.2, 0.5 → 88, không đổi case nào |
+| `SEMANTIC_KEEP` 30 | 15, 20 → 87 (mất Đầm Sen của "chỗ cho trẻ em"); 40, 60 → 88, không đổi case nào |
+| `SEMANTIC_NAME_HITS` 5 | 1 → 86 (mất "rooftop bar", "craft beer" ở TP.HCM); 3, 8 → 88, không đổi case nào |
+
+Trước khi sửa cách đặt section, `HOME_SHARE` và `SEMANTIC_KEEP` còn đổi vài case uống rượu ở Hà
+Nội, vì chúng quyết định chữ đi kèm có nhà hay không; nay chữ đi kèm luôn ở trong kệ của group nên
+các case đó không còn phụ thuộc chúng. Bảng lần đo trước (76 case):
+
+| Hằng số | Giá trị thử → case qua (lúc đó: 69) |
+|---|---|
+| `HOME_SHARE` 0.6 | 0.45-0.5 → 71: được "pub", "uống rượu với bạn bè" (Hà Nội), "rượu vang", nhưng "chỗ cho trẻ em" có nhà là đồ ăn nên mất Đầm Sen và các trung tâm thương mại; 0.52 → 69; 0.55 → 68; 0.65 → 68; 0.7 → 67 |
+| `WEAK_WEIGHT` 0.3 | 0.2, 0.4, 0.5 → 69, không đổi case nào |
+| `SEMANTIC_KEEP` 30 | 15 → 68; 20 → 69 (đổi "chỗ cho trẻ em" lấy "pub" Hà Nội); 40 → 69, không đổi case nào; 60 → 67 |
+| `SEMANTIC_NAME_HITS` 5 | 1 → 68; 3 → 68 (mất "pub" TP.HCM); 8 và 100 → 69, không đổi case nào |
+
+"chỗ cho trẻ em" không còn bar nào trong 8 nơi đầu (Estella, The Snap Cafe, Đầm Sen...), nên không
+thêm luật loại node theo từ trong `keyword_map`. 4 case còn hỏng ở 0.65 không do ngưỡng (hỏng ở
+mọi mức 0.60-0.68):
+
+- "cocktail" (TP.HCM): 5 quán cocktail trong 8 nơi đầu của kệ bar, cần 6. Nơi 5-8 là bar thường
+  có "cocktail" trong mô tả nhờ câu chung theo loại ("uống rượu, bia hoặc cocktail", 49 trong 92
+  mô tả bar), nên khớp chữ ngang quán cocktail. Chỗ sửa là nội dung mô tả, không phải truy vấn;
+  đã sửa sau đó (xem đoạn đo lại ở trên), nay case này qua.
+- "nhậu" ở Hà Nội (cả check D2 của `check_backend.py`): trang đầu (6 nơi) của section "Nhậu" là 2
+  quán nhậu Tự Do, Sparta Beer, Legend Beer, Bia hơi Cường Hói, Nút Quán; case cần 3 trong 5 quán
+  tên "Bia hơi …". Mọi nơi đều khớp "nhậu" trong mô tả với cùng điểm, nên thứ tự giữa chúng do
+  `explore` quyết định.
+- "nhạc sống" (TP.HCM): nơi gần nhất 0.648 là phòng karaoke; mô tả các bar có nhạc sống chưa ghi
+  chữ đó (Carmen Bar viết "có ban nhạc", Gang1968 Acoustic Beer không nhắc tới nhạc), nên chỉ 2 nơi
+  khớp chữ.
+- "yên tĩnh" (Huế): không bar nào trong 8 nơi đầu (R6 đạt), nhưng Tĩnh Garden Vegetarian (0.689)
+  đứng đầu chỉ vì chữ "Tĩnh" trong tên; mô tả không nói yên tĩnh. Chỉ ngưỡng 0.70 bỏ được nó, và
+  0.70 mất 6 case khác.
 
 ### 10. [hours.py](../../app/services/retrieval/hours.py): giờ mở cửa
 
@@ -371,33 +600,55 @@ do AI sinh, nên mọi lý do đều kiểm chứng được.
 
 **a. Tìm "nhà" của từ khoá và tỉa bớt hit** (`keyword_home`, `prune_hits`):
 
-- Đếm hit của từ khoá theo category, có trọng số: hit `name`/`structured` tính 1, hit chỉ ở mô tả
-  (`text`) tính 0.3.
-- **Nhà** = category chiếm ≥ 60% tổng trọng số; nếu không có thì thử theo top level; không có nữa
-  thì không có nhà.
-- Hit chỉ ở mô tả mà **nằm ngoài nhà** bị bỏ. Ví dụ: một khu chợ có mô tả nhắc tới phở không phải
-  là quán phở.
+- Đếm hit của từ khoá theo category, có trọng số: hit `name`/`structured` tính 1, hit yếu (chỉ ở
+  mô tả `text`, hoặc theo nghĩa `semantic`) tính `WEAK_WEIGHT` = 0.3.
+- **Nhà** = category chiếm ≥ `HOME_SHARE` = 60% tổng trọng số; nếu không có thì thử theo top level;
+  không có nữa thì không có nhà. Nhà tính trên mọi hit chữ cộng `SEMANTIC_KEEP` = 30 hit theo
+  nghĩa gần nhất, **kể cả nơi đã chọn**, nên nhà không đổi khi người dùng chọn dần các nơi.
+- Hit yếu **nằm ngoài nhà** bị bỏ. Ví dụ: một khu chợ có mô tả nhắc tới phở không phải là quán
+  phở. Không có nhà thì hit yếu chỉ bị bỏ khi có ít nhất `STRONG_HITS_MIN` = 3 hit mạnh: một tên
+  trùng ngẫu nhiên ("rượu" → nhà hàng Hầm Rượu) không được xoá cả chục hit mô tả.
+- Sau khi tỉa mới giữ 30 hit theo nghĩa gần nhất **còn dùng được** (đang mở, không bị tránh, chưa
+  chọn), nên chọn bớt nơi thì section được bù bằng nơi kế tiếp trong nhà.
 
 **b. Dựng section** (`build_specs`):
 
-- Mỗi sở thích dạng kệ → một section. Không có sở thích nào → dùng `defaults`. Kệ không có node
-  nào (ví dụ `beach` ở TP.HCM) → warning.
+- Mỗi sở thích dạng kệ → một section. Kệ không có node nào (`beach`) → warning "Không có dữ liệu
+  cho “…” ở thành phố này".
+- **Mặc định** (`may_use_defaults`, `uses_defaults`): khi không có sở thích (`source="interest"`)
+  nào và không có group nào, chỉ có ước muốn `other` (hoặc không có gì), và sau khi tỉa không ước
+  muốn nào **còn** nơi để hiện (`left`: nơi gợi ý được, đang mở, không bị tránh, chưa chọn) → dùng
+  `defaults` (`food`, `culture`). Quyết định một lần, trên hit đã tỉa; `service.retrieve` luôn nạp
+  nơi của kệ mặc định khi điều kiện đầu đúng. Ước muốn nào không **tìm ra** nơi nào (`found`: như
+  `left` nhưng tính cả nơi đã chọn; không phủ định, không bị giới hạn 5 câu) có warning "Chưa tìm
+  thấy địa điểm khớp “…”; đang gợi ý chung". Vì vậy ước muốn mà mọi nơi đã được chọn thì không có
+  warning, còn ước muốn mà mọi nơi đều đóng cửa trong chuyến đi hoặc bị tránh thì có.
 - Mỗi sở thích dạng từ khoá:
-  - Không có hit → warning; nếu là sở thích bắt buộc thì vẫn tạo section rỗng có `note`. Atom
-    `other` không có hit thì bỏ im lặng, vì nó có thể không phải là địa điểm ("đi cùng trẻ em").
+  - Không có hit → sở thích nêu trong `interests` có warning "Không tìm thấy địa điểm cho “…”",
+    và nếu bắt buộc thì vẫn tạo section rỗng có `note`. Atom `other` không có hit thì không có
+    section riêng (nó có thể không phải là địa điểm: "đi cùng trẻ em"); warning chỉ có khi trang
+    đang hiện mặc định, như trên. Câu bị giới hạn 5 câu không bị báo là không tìm thấy.
   - Có kệ được yêu cầu bao nhà của nó → **gộp** vào kệ đó (`matched_keywords`), nơi khớp được đẩy
     lên đầu kệ.
   - Không có → section riêng, key `kw:<...>`.
+  - **Chữ đi kèm group** (`companion`: "pub", "bia", "kiếm chỗ uống rượu" → `nightlife`) luôn
+    được gộp vào kệ của group đó, dù nhà của nó ở đâu, nên các bar khớp chữ hay khớp nghĩa được
+    đẩy lên đầu kệ bar và kệ không bao giờ mất nơi của mình. `companion_hits` giữ mọi hit nằm
+    trong node của group; ngoài group thì nhà chỉ tính trên **hit chữ** (tên, mô tả), và chỉ khi
+    có nhà thì các nơi ngoài group mới thành section riêng (Hà Nội "bia" → các quán "Bia hơi …",
+    "nhậu" → các quán nhậu, cả hai là `food.restaurant`). Section đó (`outside`) không bao giờ
+    nhận nơi của group. Quán cà phê, quán ăn chỉ gần nghĩa với "kiếm chỗ uống rượu" thì bị bỏ:
+    kệ bar mới là câu trả lời. Chữ đi kèm không bao giờ có warning "Không tìm thấy".
 
 **c. Đặt mỗi nơi vào đúng một section** (`_best_placement`):
 
 - Bỏ nơi đã ghim (đã hiện ở `pinned`) và nơi bị luật tránh (`avoided`, gồm cả bộ lọc cột như "tránh
   đồ chay", bộ lọc này không làm được trong SQL `ELIGIBLE`).
 - Kiểm tra giờ một lần; giờ đáng tin nói đóng → loại.
-- Chấm điểm nơi đó ở **mọi** section nhận nó, giữ section điểm cao nhất. Hoà thì section cụ thể hơn
-  thắng (node sâu hơn, rồi kệ ít node hơn; section từ khoá riêng là cụ thể nhất), rồi section bắt
-  buộc, rồi thứ tự người dùng nêu. Vì vậy một quán cà phê nằm trong "Cà phê" chứ không nằm trong
-  "Ẩm thực" khi người dùng yêu cầu cả hai.
+- Chấm điểm nơi đó ở **mọi** section nhận nó. Section cụ thể hơn thắng trước (node sâu hơn, rồi
+  kệ ít node hơn; section từ khoá riêng là cụ thể nhất), rồi điểm cao hơn, rồi section bắt buộc,
+  rồi thứ tự người dùng nêu. Vì vậy một quán cà phê nằm trong "Cà phê" chứ không nằm trong "Ẩm
+  thực" khi người dùng yêu cầu cả hai, kể cả khi "Ẩm thực" là bắt buộc.
 - Nơi `preferred` không vào section nào → section riêng `preferred` ("Địa điểm bạn thích").
 
 **d. Sắp xếp trong section** (`order_items`, `diversify`):
@@ -462,21 +713,44 @@ Script import: upsert theo `id` (chạy lại an toàn), `--prune` xoá id khôn
 
 ## Giới hạn đã biết
 
-- **Chỉ TP.HCM.** Điểm đến khác trả `unsupported_destination`.
+- **Chỉ 4 thành phố** (TP.HCM, Hà Nội, Đà Nẵng, Huế). Điểm đến khác trả `unsupported_destination`.
+  Chưa có dữ liệu biển, spa, Cầu Rồng, Đại Nội: tìm các thứ đó chỉ ra warning hoặc nơi gần nghĩa.
+- **Chữ đi kèm group chỉ tìm cả câu**: với câu dài chứa alias ("muốn đi nhậu với bạn bè"),
+  chữ đi kèm là cả câu, nên tìm chữ không ra quán nhậu nào (không mô tả nào có cụm đó) và chỉ
+  có kệ bar; "nhậu", "đi nhậu", "bia" thì vẫn có section riêng cho quán nhậu, bia hơi. Chữ đi kèm
+  có phủ định sau alias ("quán bar không ồn ào") không được tìm theo nghĩa, nên kệ bar không xếp
+  quán yên tĩnh lên trước.
+- **Thứ tự giữa các nơi cùng bằng chứng**: mọi nơi chỉ khớp chữ trong mô tả có cùng điểm khớp,
+  nên thứ tự giữa chúng do `explore` quyết định ("nhậu" ở Hà Nội: 1 trong 5 quán "Bia hơi …" ở
+  trang đầu, cùng Sparta Beer, Legend Beer).
+- **Câu chung theo loại trong mô tả bar**: bar mà chữ của chính dòng (tên, ghi chú, đoạn tra web)
+  không nói loại đồ uống có câu chung "uống rượu hoặc bia" suy từ loại; "cocktail", "rượu vang",
+  "bia" chỉ được viết khi dòng tự nói (Journie-Data `describe_vi.py`, `NIGHT_WORDS`).
+- **25 dòng TP.HCM giữ đoạn nguồn tiếng Anh** (Wikivoyage, Wikipedia, kèm giấy phép) sau đoạn
+  tiếng Việt. Không dịch hay bỏ, vì đó là đoạn có giấy phép và là bằng chứng đã dùng khi chọn
+  ngưỡng (ví dụ "lịch sử chiến tranh").
+- **Tên quán lọt vào embedding**: mỗi nơi được embed bằng tên + mô tả, nên một chữ trong tên có
+  thể kéo nơi đó lên dù mô tả không nói gì: "yên tĩnh" ở Huế ra Tĩnh Garden Vegetarian (0.689)
+  đứng đầu.
+- **Câu không phải địa điểm vẫn ra section** khi nó gần một nhóm mô tả: "đi cùng gia đình" ra các
+  quán hợp cho gia đình, "lần đầu đến Sài Gòn" ra các nơi nổi tiếng. Chỉ từ chỉ thời gian được bỏ
+  (`ignored_wishes`).
 - **`fetch_pois` nạp mọi nơi hợp lệ của các kệ vào Python** mỗi request và mỗi trang "xem thêm",
   vì giờ và điểm tính bằng Python. Ổn dưới khoảng 10k nơi hợp lệ; vượt ngưỡng thì cần xếp hạng sơ
   bộ trong SQL và LIMIT theo node (có comment `shortcut:` trong code).
-- **Khi chỉ có sở thích dạng từ khoá** (ví dụ chỉ "phở"), `service.py` vẫn nạp các nơi thuộc kệ
-  mặc định (`food`, `culture`), dù không section nào dùng chúng. Kết quả vẫn đúng, chỉ tốn công đọc
-  thêm.
+- **Khi chỉ có ước muốn `other`** (ví dụ chỉ "quán yên tĩnh"), `service.py` vẫn nạp các nơi thuộc
+  kệ mặc định (`food`, `culture`), vì chỉ biết có dùng mặc định hay không sau khi tỉa hit. Ước
+  muốn ra nơi nào thì các nơi đó không được dùng; kết quả vẫn đúng, chỉ tốn công đọc thêm.
 - **`LOOKUP_SQL` quét mọi dòng** (tính trigram trên từng tên), không dùng index. Ổn với dữ liệu
   hiện tại; dữ liệu lớn lên thì cần chuyển sang toán tử có index của `pg_trgm`.
 - **Cache `data_info` theo từng process**: sau khi import, mỗi instance có thể thấy dữ liệu cũ tối
   đa 5 phút.
 - **Lọc `section` làm sau khi đã tính toàn bộ**: "xem thêm" một section vẫn tốn công như request
   đầy đủ.
-- **Các ngưỡng và trọng số** (0.6/0.15/0.35, 0.55/0.15/0.15, quality 0 / explore 0.06, confidence 0.7, 60%/0.3, caps
-  đa dạng) là giá
-  trị khởi điểm, chưa được hiệu chỉnh trên dữ liệu thật lớn.
+- **Các ngưỡng và trọng số**: `SIMILARITY_MIN` 0.651, `SEMANTIC_NAME_HITS` 5, `HOME_SHARE` 60%,
+  `WEAK_WEIGHT` 0.3 và `SEMANTIC_KEEP` 30 được kiểm tra lại trên eval 76 case rồi 92 case ngày
+  2026-11-24, sau khi embed lại, sau khi sửa cách đặt section và sau khi sửa câu đồ uống trong mô tả bar (xem 9b). 0.651 nằm sát hai phía: Home Bar Là Nhà ở 0.6504 với "trời mưa đi đâu trong nhà", nơi thứ ba của "ngắm hoàng
+  hôn" ở 0.652, nên mỗi lần viết lại mô tả hoặc đổi model embedding thì phải đo lại. Các ngưỡng tên (0.6/0.15/0.35), trọng số điểm (0.55/0.15/0.15, quality 0 / explore 0.06),
+  confidence 0.7 và giới hạn đa dạng vẫn là giá trị khởi điểm, chưa hiệu chỉnh trên dữ liệu lớn.
 - **Cấu hình từ vựng** (`keyword_map`, `poi_overrides`) còn liệt kê tay. Xem thảo luận về việc
   chuyển chúng sang dữ liệu trước khi mở rộng.

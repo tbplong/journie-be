@@ -1,9 +1,13 @@
 # Non-standard interests, `other` atoms and avoid strings that map to structured columns.
-# Aliases are compared after norm() (lowercase, no accents), so "Sao Michelin" == "sao michelin".
-# A keyword either filters columns (`filter`, any listed column may match) or routes to an
-# interest group (`group`, see interest_map). Anything not listed here falls back to
-# text search over name/cuisine/features/description.
-version: keyword_map.v1
+# A whole value is looked up after norm() (lowercase, no accents), so "Sao Michelin" ==
+# "sao michelin"; an alias may belong to one keyword only. A keyword either filters columns
+# (`filter`, any listed column may match) or routes to an interest group (`group`, see
+# interest_map). Anything not listed here falls back to text search over
+# name/cuisine/features/description.
+# A wish that matches nothing as a whole is also searched for a group alias inside it
+# ("kiếm chỗ uống rượu" holds "uống rượu"), compared as written: write group aliases with their
+# accents, so "bìa rừng" never reads as "bia" and "cùng nhau" never as "nhậu".
+version: keyword_map.v1.2
 keywords:
   michelin_star:
     label: Sao Michelin
@@ -24,9 +28,27 @@ keywords:
     filter: {cuisine: [vegetarian, vegan], features: [vegetarian, vegan]}
   nightlife:
     label: Bar & nightlife
-    aliases: [bar, pub, quan bar, nightlife, club, night club, nightclub, lounge, rooftop bar,
-              cocktail, wine bar, beer, bia, quan nhau, di bar]
+    # The category as a whole: the group only; a word search would only add stray name hits
+    # ("rượu" -> a restaurant called Hầm Rượu).
+    # English plurals and phrases too: /chat keeps a non-standard interest as written ("bars").
+    aliases: [bar, quán bar, đi bar, nightlife, giải trí về đêm, rượu, uống rượu, đi uống rượu,
+              quán rượu, đồ uống có cồn, drinking, go drinking, have a drink, place to drink,
+              somewhere to drink, night out, bar hopping, bars, drinks, a drink, grab a drink,
+              go for drinks, where to drink, places to drink]
     group: nightlife
+  nightlife_kind:
+    label: Bar & nightlife
+    # A kind of bar or drink: the whole group plus a search for the traveller's words, so the
+    # matching places are lifted inside the group's section; places outside the group holding
+    # the words get their own section (Hà Nội "bia" -> the "Bia hơi …" places, filed as
+    # restaurants).
+    aliases: [pub, quán pub, club, night club, nightclub, lounge, rooftop bar, sky bar, skybar,
+              cocktail, cocktail bar, quán cocktail, wine bar, wine, rượu vang, whisky, beer, bia,
+              uống bia, quán bia, beer club, craft beer, bia craft, bia thủ công, quán nhậu, nhậu,
+              đi nhậu, speakeasy, pubs, clubs, nightclubs, night clubs, cocktails, cocktail bars,
+              rooftop bars, sky bars, skybars, wine bars, beers, craft beers, lounges]
+    group: nightlife
+    text: true
   seafood:
     label: Hải sản
     aliases: [hai san, seafood, do bien, oc, quan oc]
@@ -71,8 +93,62 @@ keywords:
     text: true
   coffee:
     label: Cà phê
-    aliases: [quan ca phe, coffee, coffee shop]
+    aliases: [quán cà phê, coffee, coffee shop]
     group: cafe
+  temple:
+    label: Đền chùa
+    # Folded, "chua" is also chua (sour): a whole value "chua" is the pagoda /chat reads, while
+    # inside a wish only "chùa" as written counts (see the header).
+    aliases: [chùa, đền, đền chùa, chùa chiền, đình chùa, đền miếu, miếu, thiền viện, pagoda,
+              pagodas, temple, temples, buddhist temple, shrine, shrines]
+    group: temple
+  church:
+    label: Nhà thờ
+    aliases: [nhà thờ, church, churches, cathedral, cathedrals]
+    group: church
+  market:
+    label: Chợ
+    # Markets only (shopping.market), not the malls the shopping interest also holds.
+    aliases: [chợ, chợ đêm, đi chợ, chợ truyền thống, phiên chợ, night market, night markets,
+              market, markets, local market]
+    group: market
+  show:
+    label: Biểu diễn
+    # Water puppets, the opera house, a play: places that put on shows (entertainment.performing_arts),
+    # which no standard interest covers. "nhạc sống" (live music) stays with the bars.
+    aliases: [múa rối, múa rối nước, rối nước, xem múa rối, xem múa rối nước, water puppet,
+              water puppets, water puppet show, puppet show, nhà hát, xem kịch, kịch, ca trù,
+              xem ca trù, biểu diễn, xem biểu diễn, xem show, show diễn, opera, ballet, theatre,
+              theater]
+    group: show
+
+# Values that name a time, not a place (compared after norm): an interest or `other` atom that
+# is exactly one of them makes no request, whatever its operator, and inside a longer wish they
+# are cut from the searched words ("tối nay muốn đi uống rượu" -> "muốn đi uống rượu").
+# "cuối tuần" cannot be left to SIMILARITY_MIN: its embedding lands on a restaurant named Wknd
+# (0.742), above the best hit of most place wishes.
+ignored_wishes: [tối nay, đêm nay, hôm nay, chiều nay, sáng nay, trưa nay, sáng mai, ngày mai,
+                 tối mai, nay, tonight, today, tomorrow, cuối tuần, cuối tuần này, weekend,
+                 this weekend]
+
+# Alias words whose unaccented spelling is an everyday word: inside a wish typed without accents
+# they never match ("muon den mot noi yen tinh" is đến, not đền; "an canh chua" is sour). A whole
+# value is still read after norm(), so /chat's avoid "chua" is the pagoda.
+accent_only: [đền, chùa, miếu, chợ]
+
+# Phrases that hold a group alias but mean something else ("bia" is also a stone stele): never
+# read as that alias inside a longer wish. Compared as written, like the aliases; in a wish typed
+# without accents they also mask the unaccented spelling ("di choi cung nhau" is not "nhậu").
+not_aliases: [bia tiến sĩ, bia đá, bia mộ, bia ký, văn bia, tấm bia, nhà bia, bắn bia, bìa rừng,
+              cơm rượu, nấu rượu, cùng nhau, với nhau, bên nhau, gặp nhau]
+
+# Words that add nothing to an alias of a group without data: "bãi biển", "đi tắm biển" are the
+# beach request alone (its no-data warning, not restaurants named Biển), while "ăn hải sản ven
+# biển" still searches its words. The words search of a kind (`text: true`) also leaves out the
+# fillers it starts with: "đi nhậu" searches "nhậu". Single words, compared as written like the
+# aliases.
+filler_words: [bãi, đi, tắm, ra, chơi, ở, tại, muốn, thích, đến, tới, một, cái, the, a, go, to,
+               at, visit, swim, swimming]
 
 # Labels for cuisine values shown in reasons; unlisted values are shown as-is.
 cuisine_labels:

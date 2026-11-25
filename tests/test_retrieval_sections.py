@@ -3,7 +3,7 @@ from typing import Any
 from app.services.retrieval.hours import DAYS, TripWindow, to_minutes
 from app.services.retrieval.interests import plan_interests
 from app.services.retrieval.poi import Poi
-from app.services.retrieval.sections import assemble, diversify, to_card
+from app.services.retrieval.sections import NO_MATCH_DEFAULTS, assemble, diversify, to_card
 from tests.test_retrieval_names_interests import extraction
 
 ANY = TripWindow(None, None, None)
@@ -93,12 +93,32 @@ def test_weak_hit_inside_the_home_is_kept() -> None:
 
 
 def test_scattered_keyword_gets_its_own_section_with_strong_hits_only() -> None:
-    pois = [poi("a"), poi("b", "attraction.landmark"), poi("c"), poi("d", "shopping.market")]
-    hits = {"kw:rooftop": {"a": "name", "b": "name", "d": "text"}}
+    pois = [
+        poi("a"),
+        poi("b", "attraction.landmark"),
+        poi("e", "culture_religion.pagoda"),
+        poi("c"),
+        poi("d", "shopping.market"),
+    ]
+    hits = {"kw:rooftop": {"a": "name", "b": "name", "e": "name", "d": "text"}}
     sections, results, _ = sections_for(pois, hits, interests=["food", "rooftop"])
-    assert set(sections["kw:rooftop"]) == {"a", "b"}
+    assert set(sections["kw:rooftop"]) == {"a", "b", "e"}
     assert sections["food"] == ["c"]
     assert not next(r for r in results if r.spec.key == "food").spec.merged
+
+
+def test_one_stray_name_hit_does_not_discard_the_description_hits() -> None:
+    # Like "rượu" in HCM: one restaurant has the word in its name (Hầm Rượu); 8 bars, 3 other
+    # restaurants and a cafe have it in their description. No node holds 60%.
+    described = [
+        *(poi(f"bar{i}", "entertainment.nightlife") for i in range(8)),
+        *(poi(f"r{i}") for i in range(3)),
+        poi("cafe", "food.cafe"),
+    ]
+    pois = [poi("named"), *described]
+    hits = {"kw:den_long": {"named": "name", **{p.id: "text" for p in described}}}
+    sections, _, _ = sections_for(pois, hits, interests=["đèn lồng"])
+    assert set(sections["kw:den_long"]) == {p.id for p in pois}
 
 
 def test_only_weak_scattered_hits_are_all_kept() -> None:
@@ -178,13 +198,20 @@ def test_other_facts_and_fruitless_other_atoms_keep_the_default_sections() -> No
     places = [poi("r"), poi("pagoda", "culture_religion.pagoda")]
     fact = {"field": "other", "operator": "eq", "value": "budget exactly 75 NZD"}
     assert plan_interests(extraction(hard_constraints=[fact])).requests == []
+    assert sections_for(places, hard_constraints=[fact])[2] == []
     wish = {"field": "other", "operator": "prefer", "value": "đi cùng trẻ em"}
     sections, _, warnings = sections_for(places, soft_constraints=[wish])
     assert sections == {"food": ["r"], "culture": ["pagoda"]}
-    assert not warnings
+    # The defaults do not pretend to answer the wish.
+    assert warnings == [NO_MATCH_DEFAULTS.format("đi cùng trẻ em")]
+    assert warnings == ["Chưa tìm thấy địa điểm khớp “đi cùng trẻ em”; đang gợi ý chung"]
+    # A refusal is not a wish for a place: no such note.
+    refusal = {"field": "other", "operator": "prefer", "value": "không uống rượu"}
+    assert sections_for(places, soft_constraints=[refusal])[2] == []
     # An `other` atom that finds places replaces the defaults, as an interest does.
-    sections, _, _ = sections_for(places, {"kw:di_cung_tre_em": {"r": "text"}}, soft_constraints=[wish])
-    assert sections == {"kw:di_cung_tre_em": ["r"]}
+    found = {"kw:di_cung_tre_em": {"r": "text"}}
+    sections, _, warnings = sections_for(places, found, soft_constraints=[wish])
+    assert sections == {"kw:di_cung_tre_em": ["r"]} and warnings == []
 
 
 def ranked(pois: list[Poi], seed: int, hits: dict | None = None, **ext: Any) -> list[str]:
@@ -330,3 +357,171 @@ def test_semantic_hits_keep_the_closest_usable_places(monkeypatch: Any) -> None:
     results, _ = assemble(plan, pois, hits, ANY, pinned_ids=frozenset({"picked"}), closeness=close)
     # "picked" no longer takes a slot; the word hit is not a semantic hit and is always kept.
     assert {i.poi.id for r in results for i in r.items} == {"near", "mid", "word"}
+
+
+def _semantic_only(
+    key: str, pois: dict[str, Poi], order: list[str]
+) -> tuple[dict, dict[str, dict[str, float]]]:
+    """Semantic hits on ``order`` (closest first) for one request key."""
+    close = {poi_id: 1 - n / len(order) for n, poi_id in enumerate(order)}
+    return {key: dict.fromkeys(order, "semantic")}, {key: close}
+
+
+def test_picking_places_refills_a_semantic_section_from_its_home(monkeypatch: Any) -> None:
+    """N14: the SEMANTIC_KEEP closest places of the home, before and after picks."""
+    monkeypatch.setattr("app.services.retrieval.sections.SEMANTIC_KEEP", 4)
+    plan = plan_interests(extraction(interests=["quán yên tĩnh để làm việc"]))
+    key = plan.requests[0].key
+    cafes = [poi(f"c{i}", "food.cafe") for i in range(6)]
+    pois = {p.id: p for p in [*cafes, poi("bar", "entertainment.nightlife")]}
+    hits, close = _semantic_only(key, pois, ["c0", "bar", "c1", "c2", "c3", "c4", "c5"])
+
+    def shown(picked: set[str]) -> list[str]:
+        results, _ = assemble(plan, pois, hits, ANY, pinned_ids=frozenset(picked), closeness=close)
+        return [i.poi.id for r in results for i in r.items]
+
+    assert set(shown(set())) == {"c0", "c1", "c2", "c3"}
+    assert set(shown({"c0", "c1"})) == {"c2", "c3", "c4", "c5"}
+
+
+def test_the_home_of_a_semantic_section_survives_picking_its_best_places() -> None:
+    """N15: 20 museums (the closest) and 10 places of other kinds; 8 museums picked."""
+    plan = plan_interests(extraction(interests=["nơi kể về lịch sử chiến tranh"]))
+    key = plan.requests[0].key
+    others = ["food.restaurant", "entertainment.nightlife", "culture_religion.temple"]
+    pois = {
+        f"p{n:02d}": poi(f"p{n:02d}", "attraction.museum" if n < 20 else others[n % 3])
+        for n in range(30)
+    }
+    hits, close = _semantic_only(key, pois, list(pois))
+
+    def categories(picked: list[str]) -> set[str]:
+        results, _ = assemble(plan, pois, hits, ANY, pinned_ids=frozenset(picked), closeness=close)
+        return {i.poi.category for r in results for i in r.items}
+
+    assert categories([]) == {"attraction.museum"}
+    assert categories(list(pois)[:8]) == {"attraction.museum"}
+
+
+def test_defaults_replace_an_other_wish_whose_places_are_all_picked() -> None:
+    """N16: the decision uses the pruned hits; no 'not found' for the defaults, and no note
+    that the wish found nothing (it did)."""
+    wish = {"field": "other", "operator": "prefer", "value": "chỗ không quá đông"}
+    plan = plan_interests(extraction(soft_constraints=[wish]))
+    key = plan.requests[0].key
+    pois = {p.id: p for p in [poi("r"), poi("pagoda", "culture_religion.pagoda"), poi("s1")]}
+    hits, close = _semantic_only(key, pois, ["s1"])
+    results, warnings = assemble(
+        plan, pois, hits, ANY, pinned_ids=frozenset({"s1"}), closeness=close
+    )
+    assert {r.spec.key: [i.poi.id for i in r.items] for r in results} == {
+        "food": ["r"],
+        "culture": ["pagoda"],
+    }
+    assert warnings == []
+
+
+def test_defaults_replace_an_other_wish_whose_word_hits_are_all_picked() -> None:
+    """N16 for places found by words: not sections [] with 'Không tìm thấy … “đi một mình”'."""
+    wish = {"field": "other", "operator": "prefer", "value": "đi một mình"}
+    pois = [poi("r"), poi("pagoda", "culture_religion.pagoda"), poi("cafe-1", "food.cafe")]
+    hits = {"kw:di_mot_minh": {"cafe-1": "text"}}
+    plan = plan_interests(extraction(soft_constraints=[wish]))
+    by_id = {p.id: p for p in pois}
+    results, warnings = assemble(plan, by_id, hits, ANY, pinned_ids=frozenset({"cafe-1"}))
+    assert {r.spec.key: [i.poi.id for i in r.items] for r in results} == {
+        "food": ["r"],
+        "culture": ["pagoda"],
+    }
+    assert warnings == []
+    # Not picked, the place answers the wish.
+    results, warnings = assemble(plan, by_id, hits, ANY)
+    assert [r.spec.key for r in results] == ["kw:di_mot_minh"] and warnings == []
+
+
+def test_defaults_name_an_other_wish_whose_places_are_all_closed() -> None:
+    """Closed during the trip is not an answer: the defaults say they replace the wish."""
+    wish = {"field": "other", "operator": "prefer", "value": "đi một mình"}
+    closed = poi("bar-1", "entertainment.nightlife", opening_hours=EVENING, hours_confidence="high")
+    pois = [poi("r"), poi("pagoda", "culture_religion.pagoda"), closed]
+    morning = TripWindow(None, to_minutes("07:00"), to_minutes("09:00"))
+    sections, _, warnings = sections_for(
+        pois, {"kw:di_mot_minh": {"bar-1": "text"}}, morning, soft_constraints=[wish]
+    )
+    assert sections == {"food": ["r"], "culture": ["pagoda"]}
+    assert warnings == [NO_MATCH_DEFAULTS.format("đi một mình")]
+
+
+def test_a_text_past_the_semantic_cap_is_not_reported_as_not_found() -> None:
+    """N17: the service warns that it was matched by words only; sections stays silent."""
+    plan = plan_interests(extraction(interests=["food", "chỗ k quá du lịch", "phở"]))
+    capped, pho = plan.requests[1].key, plan.requests[2].key
+    pois = {p.id: p for p in [poi("r"), poi("pho-hung")]}
+    # phở is merged into food, but its only place is already picked.
+    hits = {capped: {}, pho: {"pho-hung": "name"}}
+    picked = frozenset({"pho-hung"})
+    both = frozenset({capped, pho})
+    assert assemble(plan, pois, hits, ANY, pinned_ids=picked, unsearched=both)[1] == []
+    assert assemble(plan, pois, hits, ANY, pinned_ids=picked)[1] == [
+        "Không tìm thấy địa điểm cho “chỗ k quá du lịch”",
+        "Không tìm thấy địa điểm cho “phở”",
+    ]
+
+
+BARS = [poi(f"bar{i}", "entertainment.nightlife") for i in range(3)]
+
+
+def test_a_companion_never_takes_its_groups_places() -> None:
+    """I1: every bar is also a semantic hit of the words; the cafés and restaurants close in
+    meaning have no word hit, so they make no section and the bars stay in nightlife."""
+    near = [poi("r1"), poi("r2"), poi("c1", "food.cafe")]
+    pois = [*BARS, *near]
+    for fields in (
+        {"interests": ["pub"]},
+        {"hard_constraints": [{"field": "other", "operator": "eq", "value": "kiếm chỗ uống rượu"}]},
+    ):
+        key = plan_interests(extraction(**fields)).requests[1].key
+        hits = {key: {p.id: "semantic" for p in pois}}
+        sections, results, warnings = sections_for(pois, hits, **fields)
+        assert {k: set(v) for k, v in sections.items()} == {"nightlife": {b.id for b in BARS}}
+        assert warnings == [] and results[0].spec.note is None, fields
+        assert all(any(h.raw is not None for h in item.hits) for item in results[0].items)
+
+
+def test_a_companion_outside_its_group_needs_its_words() -> None:
+    """Hà Nội "bia": the "Bia hơi …" restaurants carry the word, so they get a section of their
+    own (with the restaurants close in meaning); the bars stay in nightlife; a café found by
+    meaning only is dropped."""
+    halls = [poi("bia-hoi-1", name="Bia hơi 1"), poi("bia-hoi-2", name="Bia hơi 2")]
+    pois = [*BARS, *halls, poi("beer-place"), poi("cafe", "food.cafe")]
+    hits = {"kw:bia": {"bar0": "text", "bar1": "semantic", "bia-hoi-1": "name", "bia-hoi-2": "name",
+                       "beer-place": "semantic", "cafe": "semantic"}}  # fmt: skip
+    sections, _, warnings = sections_for(pois, hits, interests=["bia"])
+    assert set(sections) == {"nightlife", "kw:bia"}
+    assert set(sections["nightlife"]) == {b.id for b in BARS}
+    assert sections["nightlife"][:2] in (["bar0", "bar1"], ["bar1", "bar0"])
+    assert set(sections["kw:bia"]) == {"bia-hoi-1", "bia-hoi-2", "beer-place"}
+    assert warnings == []
+    # With food asked for too, the halls are lifted in food instead of a section of their own.
+    sections, _, warnings = sections_for(pois, hits, interests=["food", "bia"])
+    assert set(sections) == {"food", "nightlife"} and sections["food"][:3] != ["cafe"]
+    assert set(sections["food"][:3]) == {"bia-hoi-1", "bia-hoi-2", "beer-place"}
+    assert warnings == []
+
+
+def test_a_companion_that_finds_nothing_is_silent() -> None:
+    sections, _, warnings = sections_for(BARS, {"kw:di_bar_voi_ban_be": {}},
+                                         interests=["đi bar với bạn bè"])
+    assert set(sections) == {"nightlife"} and warnings == []
+
+
+def test_a_beach_wish_with_more_words_is_answered_by_its_places() -> None:
+    wish = {"field": "other", "operator": "prefer", "value": "ăn hải sản ven biển"}
+    seafood = [poi("hai-san-1"), poi("hai-san-2")]
+    hits = {"kw:an_hai_san_ven_bien": {p.id: "semantic" for p in seafood}}
+    sections, _, warnings = sections_for(seafood, hits, soft_constraints=[wish])
+    assert sections == {"kw:an_hai_san_ven_bien": ["hai-san-1", "hai-san-2"]}
+    assert warnings == []
+    sections, _, warnings = sections_for(seafood, {}, soft_constraints=[wish])
+    assert sections == {}
+    assert warnings == ["Không có dữ liệu cho “ăn hải sản ven biển” ở thành phố này"]

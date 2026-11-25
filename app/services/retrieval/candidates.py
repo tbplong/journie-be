@@ -1,6 +1,7 @@
 """SQL candidate generation (spec 6.3-6.5): category candidates and keyword hits.
 
-Eligibility (recommendable, inside the region, not avoided by id or category) is applied in SQL;
+Eligibility (the trip's city, recommendable, inside the region, not avoided by id or category)
+is applied in SQL;
 hours, scoring and section assignment happen in Python on the returned rows. Places the
 traveller did not name must also pass the quality bar ``SUGGESTABLE``.
 """
@@ -12,7 +13,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
 from app.services.retrieval.interests import AvoidRules, InterestRequest
-from app.services.retrieval.poi import POI_COLUMNS, Poi
+from app.services.retrieval.poi import DEFAULT_CITY, POI_COLUMNS, Poi
 from app.services.retrieval.scoring import Evidence
 from app.services.retrieval.text import fold_case, lexeme_query, norm
 
@@ -33,15 +34,18 @@ def in_nodes(param: str) -> str:
 
 
 ELIGIBLE = f"""
-    recommendable AND NOT outside_region
+    city = %(city)s AND recommendable AND NOT outside_region
     AND NOT (id = ANY(%(avoid_ids)s))
     AND NOT {in_nodes("avoid_nodes")}
 """
 SUGGESTABLE = "COALESCE(confidence, 0) >= %(min_confidence)s"
 
 
-def eligibility(avoid: AvoidRules, avoid_ids: set[str]) -> dict[str, Any]:
+def eligibility(
+    avoid: AvoidRules, avoid_ids: set[str], city: str = DEFAULT_CITY
+) -> dict[str, Any]:
     return {
+        "city": city,
         "avoid_ids": sorted(avoid_ids),
         "avoid_nodes": sorted(avoid.nodes),
         "min_confidence": MIN_CONFIDENCE,
@@ -67,13 +71,19 @@ async def fetch_pois(
         return {row["id"]: Poi.from_row(row) for row in await cur.fetchall()}
 
 
-async def fetch_by_ids(conn: AsyncConnection, ids: list[str]) -> dict[str, Poi]:
-    """POIs by id with no eligibility filter (pinned and disambiguation cards)."""
+async def fetch_by_ids(
+    conn: AsyncConnection, ids: list[str], city: str | None = None
+) -> dict[str, Poi]:
+    """POIs by id with no eligibility filter (pinned and disambiguation cards), only those of
+    ``city`` when given."""
     if not ids:
         return {}
-    sql = f"SELECT {', '.join(POI_COLUMNS)} FROM pois WHERE id = ANY(%(ids)s)"
+    sql = f"""
+        SELECT {", ".join(POI_COLUMNS)} FROM pois
+        WHERE id = ANY(%(ids)s) AND (%(city)s::text IS NULL OR city = %(city)s)
+    """
     async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(sql, {"ids": ids})
+        await cur.execute(sql, {"ids": ids, "city": city})
         return {row["id"]: Poi.from_row(row) for row in await cur.fetchall()}
 
 
@@ -84,6 +94,8 @@ STRUCTURED_SQL = f"""
 """
 
 # A name hit outranks a hit elsewhere in the search document (cuisine/features/description).
+# Names use the tolerant accent rule, the rest of the document the strict one (text.py): an
+# accented word must appear as written, so "nhậu" no longer matches "nhau" (each other).
 # The lexeme matches use GIN indexes; the word_similarity typo check is evaluated per eligible
 # row. Fine at the expected <100k POIs; beyond that, switch it to the index-backed `<%` operator
 # with pg_trgm.word_similarity_threshold set on the connection.
@@ -95,7 +107,7 @@ TEXT_SQL = f"""
         FROM pois
         WHERE {ELIGIBLE} AND {SUGGESTABLE}
     ) AS scored
-    WHERE name_hit OR search_lex @@ %(tsq)s::tsquery
+    WHERE name_hit OR search_lex @@ %(tsq_strict)s::tsquery
 """
 
 
@@ -123,7 +135,13 @@ async def keyword_hits(
         if tsquery:
             await cur.execute(
                 TEXT_SQL,
-                {**params, "tsq": tsquery, "q": fold_case(request.raw), "name_min": NAME_HIT_MIN},
+                {
+                    **params,
+                    "tsq": tsquery,
+                    "tsq_strict": lexeme_query(request.raw, strict=True),
+                    "q": fold_case(request.raw),
+                    "name_min": NAME_HIT_MIN,
+                },
             )
             for poi_id, name_hit in await cur.fetchall():
                 hits.setdefault(poi_id, "name" if name_hit else "text")
@@ -131,24 +149,29 @@ async def keyword_hits(
 
 
 DATA_INFO_SQL = """
-SELECT ARRAY(SELECT DISTINCT unnest(cuisine) FROM pois), (SELECT max(data_version) FROM pois)
+SELECT ARRAY(SELECT DISTINCT unnest(cuisine) FROM pois WHERE city = %(city)s),
+       (SELECT max(data_version) FROM pois WHERE city = %(city)s)
 """
 DATA_INFO_TTL_SECONDS = 300
 # shortcut: per-process cache, so each instance sees a new import after at most the TTL.
-_data_info: tuple[float, dict[str, str], str | None] | None = None
+_data_info: dict[str, tuple[float, dict[str, str], str | None]] = {}
 
 
-async def data_info(conn: AsyncConnection) -> tuple[dict[str, str], str | None]:
-    """(normalized cuisine value -> stored value, data version). Both change only on import.
+async def data_info(
+    conn: AsyncConnection, city: str = DEFAULT_CITY
+) -> tuple[dict[str, str], str | None]:
+    """(normalized cuisine value -> stored value, data version) of a city. Both change only on
+    import.
 
     The cuisines let an interest like 'ramen' filter ``cuisine`` without a keyword map entry.
     """
-    global _data_info
     now = time.monotonic()
-    if _data_info is None or now - _data_info[0] > DATA_INFO_TTL_SECONDS:
+    cached = _data_info.get(city)
+    if cached is None or now - cached[0] > DATA_INFO_TTL_SECONDS:
         async with conn.cursor() as cur:
-            await cur.execute(DATA_INFO_SQL)
+            await cur.execute(DATA_INFO_SQL, {"city": city})
             row = await cur.fetchone()
         cuisines, version = row if row else ([], None)
-        _data_info = (now, {norm(value): value for value in cuisines or []}, version)
-    return _data_info[1], _data_info[2]
+        cached = (now, {norm(value): value for value in cuisines or []}, version)
+        _data_info[city] = cached
+    return cached[1], cached[2]

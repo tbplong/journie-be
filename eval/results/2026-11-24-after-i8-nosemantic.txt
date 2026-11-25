@@ -1,0 +1,144 @@
+ok   name-exact
+ok   name-unaccented
+ok   name-english-alias
+ok   name-typo
+ok   name-partial
+ok   name-ambiguous
+ok   name-not-found
+ok   interest-museum
+       museum: P@5=0.40 nDCG@5=0.32 top=['quang-san-art-museum-a719b8', 'tomuralee-gallery-fabda5', 'bao-tang-luc-luong-vu-trang-mien-dong-na-af47f7', 'bao-tang-chien-dich-ho-chi-minh-c7cfd8', 'vin-gallery-4a7a76']
+ok   interest-cafe-no-bars
+       cafe: P@5=0.00 nDCG@5=0.00 top=['cai-to-chim-1e64e9', 'cheese-coffee-2c704e', 'cloud-vape-and-coffee-f79db7', 'ca-phe-a-dor-4cbc69', 'ca-phe-anh-phan-810267']
+ok   food-plus-pho
+ok   cafe-pho-culture
+ok   keyword-michelin
+       kw:michelin: P@5=0.20 nDCG@5=0.37 top=['coco-dining-56185f', 'oc-ba-co-loc-coc-840d27', 'pho-hung-256207', 'hoi-an-sense-cf69d3', 'oc-dao-b6c515']
+ok   keyword-sao-michelin
+ok   keyword-vegetarian
+       food: P@5=0.00 nDCG@5=0.00 top=['gotcha-saigon-44911c', 'quan-chay-thoi-ke-a23a1b', 'nha-hang-chay-phat-hoa-7493ee', 'hashtag-cafe-b0eac7', 'quan-chay-sala-cc9a5b']
+ok   keyword-bar
+       nightlife: P@5=0.20 nDCG@5=0.39 top=['go2-bar-9cec48', 'king-beer-85-3ad3a0', 'terroir-wine-bar-36dddd', 'original-f7c68e', 'little-bear-wine-bar-00a51d']
+ok   keyword-seafood-vn
+       kw:seafood: P@5=0.00 nDCG@5=0.00 top=['hai-san-phu-loc-0f4c6b', 'oc-binh-dan-210c36', 'hai-san-giang-ghe-0e347f', 'quan-an-duong-thanh-08711d', 'hai-san-binh-thuan-dbfa5b']
+ok   keyword-banh-mi
+       kw:sandwich: P@5=0.40 nDCG@5=0.32 top=['gotcha-saigon-44911c', 'an-an-b0728d', 'banh-mi-huynh-hoa-c31355', 'banh-mi-hong-hoa-0c2f9c', 'ca-phe-hochi-838d2b']
+ok   other-atom-michelin
+       food: P@5=0.20 nDCG@5=0.39 top=['coco-dining-56185f', 'oc-ba-co-loc-coc-840d27', 'pho-hung-256207', 'hoi-an-sense-cf69d3', 'oc-dao-b6c515']
+ok   hours-early-morning-sat
+       food: P@5=0.00 nDCG@5=0.00 top=['cai-to-chim-1e64e9', 'cheese-coffee-2c704e', 'gotcha-saigon-44911c', 'quan-mi-nam-b9f64b', 'hu-tieu-lien-b7b0a9']
+ok   hours-late-night-sat
+       food: P@5=0.00 nDCG@5=0.00 top=['quan-an-co-ba-7d4967', 'gotcha-saigon-44911c', 'shamoji-robata-yaki-4ac287', 'banh-canh-cua-hai-cua-0b2ddc', 'pho-hung-256207']
+       nightlife: P@5=0.20 nDCG@5=0.39 top=['go2-bar-9cec48', 'terroir-wine-bar-36dddd', 'original-f7c68e', 'malt-saigon-bar-354bc7', 'home-bar-la-nha-5d2e37']
+ok   hours-monday-museums
+ok   avoid-kind
+       culture: P@5=0.00 nDCG@5=0.00 top=['chua-tam-son-ec97e3', 'chua-hung-phuoc-a5e713', 'nha-tho-thanh-jeanne-d-arc-c56f38', 'tuyen-lam-buddhist-temple-d734fe', 'chung-cu-42-nguyen-hue-8316ee']
+ok   avoid-name
+       shopping: P@5=0.20 nDCG@5=0.30 top=['lucky-plaza-f3a955', 'cho-dem-hanh-thong-tay-d637ef', 'cho-phu-lam-17c9b3', 'lotte-department-store-41c03e', 'tttm-romea-fdb0a5']
+ok   avoid-bar
+ok   preferred-boost
+       food: P@5=0.20 nDCG@5=1.00 top=['cuc-gach-quan-807d0d', 'cai-to-chim-1e64e9', 'quan-an-co-ba-7d4967', 'gangnam-bbq-house-fb10a1', 'cheese-coffee-2c704e']
+ok   beach-no-data
+ok   nature-required
+ok   no-interest-defaults
+ok   unsupported-destination
+ok   empty-extraction
+ok   semantic-work-cafe
+       food: P@5=0.20 nDCG@5=0.04 top=['cai-to-chim-1e64e9', 'quan-an-co-ba-7d4967', 'gangnam-bbq-house-fb10a1', 'cheese-coffee-2c704e', 'nha-hang-am-thuc-que-nha-bf7590']
+       culture: P@5=0.20 nDCG@5=0.39 top=['quang-san-art-museum-a719b8', 'chua-tam-son-ec97e3', 'chua-hung-phuoc-a5e713', 'nha-tho-thanh-jeanne-d-arc-c56f38', 'tuyen-lam-buddhist-temple-d734fe']
+ok   semantic-sunset-view
+       food: P@5=0.00 nDCG@5=0.00 top=['cai-to-chim-1e64e9', 'quan-an-co-ba-7d4967', 'gangnam-bbq-house-fb10a1', 'cheese-coffee-2c704e', 'nha-hang-am-thuc-que-nha-bf7590']
+       culture: P@5=0.00 nDCG@5=0.00 top=['quang-san-art-museum-a719b8', 'chua-tam-son-ec97e3', 'chua-hung-phuoc-a5e713', 'nha-tho-thanh-jeanne-d-arc-c56f38', 'tuyen-lam-buddhist-temple-d734fe']
+ok   semantic-kids
+       food: P@5=0.00 nDCG@5=0.00 top=['cai-to-chim-1e64e9', 'quan-an-co-ba-7d4967', 'gangnam-bbq-house-fb10a1', 'cheese-coffee-2c704e', 'nha-hang-am-thuc-que-nha-bf7590']
+       culture: P@5=0.00 nDCG@5=0.00 top=['quang-san-art-museum-a719b8', 'chua-tam-son-ec97e3', 'chua-hung-phuoc-a5e713', 'nha-tho-thanh-jeanne-d-arc-c56f38', 'tuyen-lam-buddhist-temple-d734fe']
+ok   semantic-war-history
+ok   semantic-local-eatery
+       food: P@5=0.00 nDCG@5=0.00 top=['cai-to-chim-1e64e9', 'quan-an-co-ba-7d4967', 'gangnam-bbq-house-fb10a1', 'cheese-coffee-2c704e', 'nha-hang-am-thuc-que-nha-bf7590']
+       culture: P@5=0.20 nDCG@5=0.24 top=['quang-san-art-museum-a719b8', 'chua-tam-son-ec97e3', 'chua-hung-phuoc-a5e713', 'nha-tho-thanh-jeanne-d-arc-c56f38', 'tuyen-lam-buddhist-temple-d734fe']
+ok   drink-hcm-hard-eq
+ok   drink-danang-hard-eq
+ok   drink-hanoi-tonight
+FAIL drink-hcm-soft-prefer
+       top_reason {'section': 'nightlife', 'k': 8, 'contains': 'Gợi ý theo mô tả', 'min': 8}: best 0 < 8
+ok   drink-hcm-ruou
+ok   drink-hanoi-ruou
+ok   drink-hue-guard
+ok   nhau-hcm
+FAIL nhau-hanoi
+       include_top {'k': 6, 'ids': ['bia-hoi-cuong-hoi-cde88a', 'bia-hoi-cuong-nga-728af9', 'bia-hoi-hai-xom-le-trong-tan-6c9b38', 'bia-hoi-hai-xom-phan-ke-binh-40da2d', 'bia-hoi-ngoc-hang-82d530'], 'min': 3}: best 1 < 3
+ok   bia-hanoi
+ok   bia-hoi-hanoi-guard
+ok   bar-hcm-guard
+ok   pub-hcm
+ok   pub-hanoi
+FAIL rooftop-hcm
+       include_top {'section': 'nightlife', 'k': 5, 'ids': ['chang-vang-rooftop-50b2f6'], 'min': 1}: best 0 < 1
+FAIL rooftop-danang-guard
+       include_top {'k': 5, 'ids': ['vivid-rooftop-bar-pool-9ea615', 'horizon-bar-38bbc3', 'brilliant-top-bar-321bf4', 'marine-sky-bar-8da220', 'ocean-sky-bar-65786b', 'mauna-kea-skybar-a6b0ff', 'the-gypsy-rooftop-restaurant-bar-29e2c3'], 'min': 4}: best 3 < 4
+FAIL craft-beer-hcm
+       include_top {'k': 8, 'ids': ['deme-brewing-4ef6b2', 'gammer-beer-a278d0', 'gang1968-acoustic-beer-cfdf55', 'x-pose-beer-club-dde96c', 'king-beer-85-3ad3a0'], 'min': 2}: best 1 < 2
+ok   craft-beer-hue
+ok   bia-craft-danang
+ok   cocktail-hcm
+ok   wine-hcm
+ok   no-alcohol-hcm
+ok   cho-hcm
+ok   chua-hcm-guard
+FAIL kids-hcm
+       include_top {'k': 5, 'ids': ['dam-sen-water-park-310e87', 'cong-vien-van-hoa-dam-sen-f0901d'], 'min': 1}: best 0 < 1
+ok   quiet-hue
+FAIL cafe-quiet-hcm-guard
+       top_reason {'section': 'cafe', 'k': 5, 'contains': ['Gợi ý theo mô tả', 'Mô tả có'], 'min': 5}: best 0 < 5
+       matched_keywords {'section': 'cafe', 'contains': 'quán cà phê yên tĩnh'}: []
+ok   rain-hcm
+FAIL sunset-danang
+       top_category {'k': 8, 'category': 'food.restaurant', 'max': 0}: 6 > 0
+       include_top {'k': 8, 'ids': ['vivid-rooftop-bar-pool-9ea615', 'horizon-bar-38bbc3', 'brilliant-top-bar-321bf4', 'marine-sky-bar-8da220', 'ocean-sky-bar-65786b', 'mauna-kea-skybar-a6b0ff', 'the-gypsy-rooftop-restaurant-bar-29e2c3', 'cau-song-han-han-river-bridge-bb50c0', 'cong-vien-apec-12dab7'], 'min': 3}: best 1 < 3
+FAIL war-history-guard
+       include_top {'k': 4, 'ids': ['bao-tang-chung-tich-chien-tranh-08b374'], 'min': 1}: best None < 1
+FAIL live-music-hcm
+       min_total {'min': 3}: best 2 < 3
+       include_top {'k': 8, 'ids': ['carmen-bar-792146', 'phong-tra-khong-ten-5fd304', 'gang1968-acoustic-beer-cfdf55', 'go2-bar-9cec48'], 'min': 2}: best 1 < 2
+ok   live-music-hanoi
+ok   nhau-tonight-hanoi
+ok   budget-eq-hcm-guard
+ok   beach-danang-bien
+ok   beach-danang-bai-bien
+ok   negative-together-hcm
+ok   nosem-drink-eq
+ok   nosem-ruou
+ok   nosem-nhau
+ok   nosem-bar
+ok   drink-hanoi-hard-eq
+ok   drink-hue-hard-eq
+ok   drink-hanoi-soft-prefer
+ok   drink-danang-soft-prefer
+ok   drink-hue-soft-prefer
+ok   nhau-hue
+ok   bar-quiet-hcm
+FAIL seafood-sea-danang
+       min_total {'min': 3}: best None < 3
+       include_top {'k': 8, 'ids': ['be-ni-2-c28c66', 'hai-san-be-bien-ba6867', 'hai-san-thoi-co-2bbb76', 'nha-hang-hai-san-o-kia-71c65e', 'dao-xanh-quan-3fd570', 'hai-san-ba-thoi-8115bb', 'moc-quan-9892a8', 'nam-danh-seafood-e9cd93'], 'min': 2}: best None < 2
+       no_warning_like 'Không có dữ liệu': ['Không có dữ liệu cho “ăn hải sản ven biển” ở thành phố này']
+FAIL co-do-hue
+       no_warning_like 'đang gợi ý chung': ['Chưa tìm thấy địa điểm khớp “khám phá cố đô”; đang gợi ý chung']
+FAIL dusk-unaccented-danang
+       no_section_like 'food': sections ['food']
+       no_section_like 'culture': sections ['culture']
+ok   nosem-drink-eq-hanoi
+ok   nosem-drink-eq-danang
+ok   nosem-nhau-hue
+ok   nosem-bars-hanoi
+ok   nosem-friends-bar-hcm
+ok   nosem-cocktails-danang
+
+| metric | value |
+|---|---|
+| cases passing all checks | 79/92 |
+| name resolution accuracy | 9/9 |
+| mean P@5 (27 sections) | 0.230 |
+| mean nDCG@5 | 0.285 |
+| sections with a relevant top-5 item | 0.593 |
+| famous share of top 6 (120 sections) | 0.081 |
+| distinct wards in top 6 | 3.54 |
+| must_not_contain violations | 0 |

@@ -25,7 +25,13 @@ from app.services.retrieval.scoring import (
     Hit,
     match_score,
 )
-from app.services.retrieval.semantic import QueryCache, document_hash, document_text, negated
+from app.services.retrieval.semantic import (
+    QueryCache,
+    document_hash,
+    document_text,
+    first_negation,
+    negated,
+)
 
 SETTINGS = Settings(_env_file=None)
 VECTOR = [0.5] * EMBEDDING_DIMENSIONS
@@ -126,10 +132,34 @@ def test_long_lists_are_split_into_batches_in_order() -> None:
         ("don't like crowds", True),
         ("somewhere without tourists", True),
         ("never touristy", True),
+        # "chẳng" written without accents, and English contractions without the apostrophe
+        ("chang qua du lich", True),
+        ("places that aren't touristy", True),
+        ("I can't stand crowds", True),
+        ("I cannot stand crowds", True),
+        ("won’t like touristy spots", True),
+        ("didn't want crowds", True),
+        ("wasnt busy", True),
+        ("shouldn't be crowded", True),
+        # the accented words that fold to "chang" are not negations, nor is a must-see
+        ("Chạng Vạng rooftop", False),
+        ("quán chàng trai", False),
+        ("a sunset you can't miss", False),
+        # dusk typed without accents, and the Thai beer
+        ("ngam chang vang tren cao", False),
+        ("uống bia Chang", False),
+        ("chang beer on a rooftop", False),
     ],
 )
 def test_negated_text_is_detected(text: str, expected: bool) -> None:
     assert negated(text) is expected
+
+
+def test_the_first_negation_is_located_after_the_masked_phrases() -> None:
+    assert first_negation("quán bar không ồn ào") == 2
+    assert first_negation("không gian xanh, không ồn ào") == 3
+    assert first_negation("don't want a bar") == 0
+    assert first_negation("quán chill") is None
 
 
 def test_the_cache_embeds_only_new_texts_and_stays_bounded() -> None:
@@ -150,8 +180,8 @@ def test_the_cache_embeds_only_new_texts_and_stays_bounded() -> None:
 
 def test_closeness_spans_each_querys_own_hits() -> None:
     # Real similarities sit in a narrow band above the threshold; the closest hit gets 1.
-    assert semantic.closeness({"a": 0.721, "b": 0.686, "c": 0.65}) == pytest.approx(
-        {"a": 1.0, "b": 0.507, "c": 0.0}, abs=1e-3
+    assert semantic.closeness({"a": 0.721, "b": 0.686, "c": 0.651}) == pytest.approx(
+        {"a": 1.0, "b": 0.5, "c": 0.0}, abs=1e-3
     )
     assert semantic.closeness({"only": 0.7}) == {"only": 1.0}
     assert semantic.closeness({}) == {}
@@ -186,21 +216,58 @@ def test_schema_vector_size_matches_the_embedding_size() -> None:
     assert f"embedding vector({EMBEDDING_DIMENSIONS})" in schema
 
 
-def test_a_term_that_names_places_is_not_searched_by_meaning() -> None:
-    from app.services.retrieval.interests import InterestRequest
+def _embedded(requests: list, hits: dict) -> tuple[list[list[str]], list[str], frozenset[str]]:
+    """Texts sent to the embedder by service._semantic, its warnings and the unsearched keys.
+    The embedder fails after recording the call, so no database is needed (use fresh_cache)."""
     from app.services.retrieval.service import _semantic
 
     calls: list[list[str]] = []
+    warnings: list[str] = []
 
     async def embed(texts: list[str]) -> list[list[float]]:
         calls.append(texts)
         raise GeminiUpstreamError("stop after recording the call")
 
+    job = _semantic(None, requests, {}, embed, hits, warnings)  # type: ignore[arg-type]
+    _, unsearched = asyncio.run(job)
+    return calls, warnings, unsearched
+
+
+@pytest.fixture
+def fresh_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(semantic, "QUERY_CACHE", QueryCache())
+
+
+def test_a_term_that_names_places_is_not_searched_by_meaning(fresh_cache: None) -> None:
+    from app.services.retrieval.interests import InterestRequest
+
     pho = InterestRequest("phở", "prefer", "interest", text="pho")
+    beer = InterestRequest("craft beer", "prefer", "interest", text="craft beer")
     quiet = InterestRequest("quán yên tĩnh", "prefer", "interest", text="quan yen tinh")
-    hits = {pho.key: {"pho-hung": "name", "market": "text"}, quiet.key: {"cafe": "text"}}
-    asyncio.run(_semantic(None, [pho, quiet], {}, embed, hits, []))  # type: ignore[arg-type]
-    assert calls == [[semantic.QUERY_FORMAT.format("quán yên tĩnh")]]
+    named = {f"pho-{i}": "name" for i in range(semantic.SEMANTIC_NAME_HITS)}
+    hits = {
+        pho.key: {**named, "market": "text"},
+        # Two stray name hits do not switch the search by meaning off.
+        beer.key: {"yobe-craft-beer": "name", "craft-house": "name"},
+        quiet.key: {"cafe": "text"},
+    }
+    calls, warnings, unsearched = _embedded([pho, beer, quiet], hits)
+    assert calls == [[semantic.QUERY_FORMAT.format(t) for t in ("craft beer", "quán yên tĩnh")]]
+    assert unsearched == frozenset() and not any("Mỗi lần chỉ tìm" in w for w in warnings)
+
+
+def test_texts_past_the_cap_are_named_and_not_searched(fresh_cache: None) -> None:
+    from app.services.retrieval.interests import InterestRequest
+
+    texts = [f"chủ đề {i}" for i in range(semantic.MAX_QUERIES + 1)]
+    requests = [
+        InterestRequest(t, "prefer", "interest", text=f"chu de {i}") for i, t in enumerate(texts)
+    ]
+    calls, warnings, unsearched = _embedded(requests, {r.key: {} for r in requests})
+    assert calls == [[semantic.QUERY_FORMAT.format(t) for t in texts[:-1]]]
+    assert unsearched == frozenset({requests[-1].key})
+    assert any(f"“{texts[-1]}”" in w and "theo ý nghĩa" in w for w in warnings), warnings
+    assert not any("Không tìm thấy" in w for w in warnings)
 
 
 def test_a_cached_text_evicted_while_waiting_for_the_embedder_is_still_returned() -> None:

@@ -77,6 +77,14 @@ class PoiCard(BaseModel):
     opening_hours_raw: str | None
     website: str | None
     phone: str | None
+    visit_minutes: int | None = Field(
+        default=None,
+        ge=1,
+        le=720,
+        description="Expected visit length in minutes (the place's own value, else its restaurant "
+        "style or category; config/visit_minutes.yaml). In a routing request it is the stop's "
+        "length, so a length the traveller changed is kept; left out, routing uses its own.",
+    )
 
 
 class Disambiguation(BaseModel):

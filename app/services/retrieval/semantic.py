@@ -2,9 +2,10 @@
 descriptions (Gemini embeddings, pgvector).
 
 Only requests that matched no taxonomy group and no keyword (InterestRequest.text) and whose
-words match no place name are searched this way; "cafe" or "phở" keep their structured and
-full-text paths (service._semantic). Text with a negation is skipped: an embedding of "không quá du lịch" sits next to "du lịch", so it would find exactly
-the places the traveller wants to avoid.
+words do not already name SEMANTIC_NAME_HITS places are searched this way; "cafe" or "phở"
+keep their structured and full-text paths (service._semantic). Text with a negation is skipped:
+an embedding of "không quá du lịch" sits next to "du lịch", so it would find exactly the places
+the traveller wants to avoid.
 """
 
 import hashlib
@@ -22,10 +23,30 @@ from app.services.retrieval.text import fold_case, norm
 # gemini-embedding-2 takes no task_type: the task goes in the text (asymmetric retrieval format).
 QUERY_FORMAT = "task: search result | query: {}"
 DOCUMENT_FORMAT = "title: {} | text: {}"
-# Picked on 12 probes taken from /chat output: 0.65 keeps every place wish (top hits 0.655-0.771)
-# and drops 2 of 4 non-place phrases ("đi một mình" 0.648). Neither this nor a per-query z-score
-# separates them all: "cuối tuần" still matches a bar named Wknd (0.742).
-SIMILARITY_MIN = 0.65
+# First picked on 12 probes from /chat output (place wishes' top hits 0.655-0.771; 2 of 4
+# non-place phrases dropped). Re-measured on 2026-11-24 after the descriptions were rewritten
+# and re-embedded: eval/run_eval.py --similarities on the 76 eval cases (4 cities) plus 25
+# probes, the 8 original ones that were written down among them. The five original place wishes
+# now top at 0.684-0.759; "đi một mình" (0.648) still drops, "đi cùng trẻ em" (0.716) does not.
+# Eval cases passed: 0.60 67, 0.62-0.63 68, 0.64-0.65 69, 0.655-0.66 67, 0.67-0.68 69, 0.70 65.
+# 0.65 is the highest value that keeps 3 rooftop bars for "ngắm hoàng hôn" in Đà Nẵng (the
+# third at 0.652) and the malls for "trời mưa đi đâu trong nhà"; 0.64-0.645 pass nothing more
+# and let in karaoke rooms for "nhạc sống" and wrong places for "sống ảo chụp ảnh". 0.67-0.68
+# win two Hà Nội drinking cases only by losing "ngắm hoàng hôn" and either "chỗ cho trẻ em" or
+# the Huế bars. No value keeps non-place phrases out: "đi cùng bạn bè" (0.712) and "đi cùng gia
+# đình" (0.707) match places named or described for friends and families (King Beer 85, Karaoke
+# Gia Đình), above the best hit of "yên tĩnh" (0.689) or "lịch sử chiến tranh" (0.684); time
+# phrases ("cuối tuần": Wknd at 0.742) are dropped as ignored_wishes in keyword_map instead. A
+# second value by source does not help: both kinds arrive as `other` atoms. The drinking cases
+# that moved with the value were a section-placement bug (a group's companion text taking the
+# group's bars), fixed in sections.py; re-run on 92 cases after that fix: 0.60 85, 0.62-0.63 86,
+# 0.64-0.65 88, 0.655 86, 0.66-0.67 85, 0.68 84, 0.70 83.
+# Raised to 0.651 the same day after 49 bar descriptions lost the generic "rượu, bia hoặc
+# cocktail" sentence and were re-embedded: Home Bar Là Nhà went from 0.643 to 0.6504 for "trời
+# mưa đi đâu trong nhà" and entered that section (rain-hcm). 0.6505-0.652 pass 89/92 with the
+# same P@5 and nDCG@5 as 0.65; 0.653 loses the third rooftop bar of "ngắm hoàng hôn" in Đà Nẵng.
+# Outside the eval, "chỗ vui chơi cho trẻ em" in Huế loses its only hit (a museum at 0.6504).
+SIMILARITY_MIN = 0.651
 # Nearest places fetched per request: sections keeps the SEMANTIC_KEEP closest after the hours,
 # avoid and already-picked filters (<= 70 picked and pinned places per request).
 FETCH_K = SEMANTIC_KEEP * 4
@@ -33,20 +54,35 @@ QUERY_CACHE_SIZE = 512  # per process; a miss only costs one embedding call
 # Free-text interests searched by meaning per request; each uncached one costs a unit of the
 # embedding quota, and the request is unauthenticated. The rest are matched by words only.
 MAX_QUERIES = 5
+# A text whose words already name this many places ("phở", "bánh mì") is not searched by
+# meaning: embeddings ignore the accent rule, so "phở" would find "Đông Phố". One or two stray
+# name hits must not switch it off: "rượu" names one restaurant (Hầm Rượu), "craft beer" two.
+# Re-checked on the 2026-11-24 eval (92 cases): 1 loses "rooftop bar" and "craft beer" in
+# TP.HCM, 3 and 8 change no case.
+SEMANTIC_NAME_HITS = 5
 
-# "chả" is left out: it is far more often a dish (bún chả, chả giò) than a negation. "khong" and
-# "ko" are the unaccented spellings no place wish uses (folding keeps "khổng" as is).
+# "chả" is left out: it is far more often a dish (bún chả, chả giò) than a negation. "khong",
+# "chang" and "ko" are the unaccented spellings no place wish uses (folding keeps "khổng" and
+# "chạng" as is). English contractions lose their apostrophe first (negated()).
 NEGATIONS = frozenset({
-    "không", "chẳng", "đừng", "tránh", "chớ", "khong", "ko",
-    "no", "not", "avoid", "without", "never", "dont", "doesnt", "isnt", "nothing",
+    "không", "chẳng", "đừng", "tránh", "chớ", "khong", "chang", "ko",
+    "no", "not", "avoid", "without", "never", "nothing", "cannot",
+    "dont", "doesnt", "didnt", "isnt", "arent", "wasnt", "werent", "cant", "couldnt", "wont",
+    "wouldnt", "shouldnt", "hasnt", "havent",
 })
 # Phrases holding a negation word that are not negations: "không gian xanh" = green space,
-# "không thể bỏ lỡ" = must-see, "tránh nắng" = shelter from the sun.
+# "không thể bỏ lỡ" = must-see, "tránh nắng" = shelter from the sun, "chạng vạng" = dusk (also
+# typed "chang vang"), Chang = a Thai beer.
 NOT_NEGATIONS = frozenset({
     "không gian", "không khí", "không trung", "hàng không",
     "không thể bỏ lỡ", "không thể bỏ qua", "không nên bỏ lỡ", "không nên bỏ qua",
-    "tránh nắng", "tránh nóng", "tránh mưa",
+    "tránh nắng", "tránh nóng", "tránh mưa", "cant miss", "cannot miss",
+    "chạng vạng", "bia chang", "chang beer",
 })
+# Accented phrases match only words as written; their unaccented spelling only unaccented words.
+_NOT_NEGATION_WORDS = tuple(
+    tuple(phrase.split()) for phrase in sorted({*NOT_NEGATIONS, *map(norm, NOT_NEGATIONS)})
+)
 
 Embed = Callable[[list[str]], Awaitable[list[list[float]]]]
 
@@ -73,18 +109,29 @@ def document_hash(model: str, text: str) -> str:
     return hashlib.sha256(f"{model}|{EMBEDDING_DIMENSIONS}|{text}".encode()).hexdigest()
 
 
+def words_of(text: str) -> list[str]:
+    """fold_case words; "don't" -> "dont" first (punctuation would split it in two)."""
+    return fold_case(text.replace("’", "").replace("'", "")).split()
+
+
+def first_negation(text: str) -> int | None:
+    """Index in words_of(text) of the first negation word outside NOT_NEGATIONS, if any."""
+    words = words_of(text)
+    for phrase in _NOT_NEGATION_WORDS:
+        size = len(phrase)
+        for start in range(len(words) - size + 1):
+            if tuple(words[start : start + size]) == phrase:
+                words[start : start + size] = [""] * size
+    return next((n for n, word in enumerate(words) if word in NEGATIONS), None)
+
+
 def negated(text: str) -> bool:
-    # "don't" -> "dont" before punctuation turns the apostrophe into a word break.
-    folded = f" {fold_case(text.replace('’', '').replace("'", ''))} "
-    # Accented phrases first, then their unaccented spelling (matches only unaccented words).
-    for phrase in (*NOT_NEGATIONS, *map(norm, NOT_NEGATIONS)):
-        folded = folded.replace(f" {phrase} ", " ")
-    return any(word in NEGATIONS for word in folded.split())
+    return first_negation(text) is not None
 
 
 def closeness(found: dict[str, float]) -> dict[str, float]:
     """Similarity -> 0 at SIMILARITY_MIN, 1 at this query's closest place. One query's hits sit
-    in a narrow band (0.65-0.77 seen), which a fixed 0.65-1 scale flattens below the seeded
+    in a narrow band (0.65-0.79 seen), which a fixed 0.65-1 scale flattens below the seeded
     shuffle, so semantic sections would not be ordered by closeness."""
     if not found:
         return {}

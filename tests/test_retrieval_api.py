@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 from app.api.routes.retrieval import get_connection
 from app.main import app
 from app.schemas.retrieval import RetrievalRequest
+from app.services.extraction.processing import standard_name
 from app.services.retrieval.db import Connect, reuse
-from app.services.retrieval.service import request_seed
+from app.services.retrieval.service import SUPPORTED_DESTINATIONS, request_seed
 from tests.test_retrieval_names_interests import BASE
 
 
@@ -36,10 +37,28 @@ def test_missing_database_is_a_problem_response(client: TestClient) -> None:
 def test_statuses_that_need_no_query(client: TestClient) -> None:
     app.dependency_overrides[get_connection] = no_connection
     other_city = client.post(
-        "/retrieval", json={"extraction": {**BASE, "destination": "Hanoi", "interests": ["food"]}}
+        "/retrieval", json={"extraction": {**BASE, "destination": "Da Lat", "interests": ["food"]}}
     ).json()
     assert other_city["status"] == "unsupported_destination"
     assert other_city["sections"] == [] and other_city["warnings"]
+
+    atoms = [
+        {"field": "destination", "operator": "eq", "value": city} for city in ("Hanoi", "Da Nang")
+    ]
+    two_cities = client.post(
+        "/retrieval",
+        json={
+            "extraction": {
+                **BASE,
+                "destination": None,
+                "interests": ["cafe"],
+                "hard_constraints": atoms,
+                "possible_conflicts": ["destination_disagreement"],
+                "needs_clarification": True,
+            }
+        },
+    ).json()
+    assert two_cities["status"] == "unsupported_destination" and two_cities["sections"] == []
 
     empty = client.post("/retrieval", json={"extraction": {**BASE, "destination": None}}).json()
     assert empty["status"] == "empty_extraction"
@@ -115,3 +134,12 @@ def test_seed_defaults_to_the_extraction_and_can_be_overridden() -> None:
     assert request_seed(cafe) == request_seed(request(ext={"interests": ["cafe"]}, offset=6))
     assert request_seed(cafe) != request_seed(request(ext={"interests": ["food"]}))
     assert request_seed(request(ext={"interests": ["cafe"]}, seed=7)) == 7
+
+
+@pytest.mark.parametrize(
+    ("spelling", "destination"),
+    [("TP.HCM", "Ho Chi Minh City"), ("Hà Nội", "Hanoi"), ("Đà Nẵng", "Da Nang"), ("Huế", "Hue")],
+)
+def test_each_supported_city_is_reachable(spelling: str, destination: str) -> None:
+    assert standard_name("destination", spelling) == destination
+    assert destination in SUPPORTED_DESTINATIONS

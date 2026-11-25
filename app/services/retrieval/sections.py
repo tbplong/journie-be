@@ -6,6 +6,12 @@
   ``HOME_SHARE`` of its hits, weighted by evidence. Description-only hits outside the home are
   dropped. It is merged into a requested section covering its home, which lifts its hits to the
   top with a reason; otherwise it becomes its own section of just its hits.
+* A text request that comes with a group (InterestRequest.companion: "bia", "kiếm chỗ uống
+  rượu" -> nightlife) is always merged into that group's section, whatever its home: its hits
+  inside the group are lifted there, so the section never loses its places to a section named
+  after the words. Outside the group, only places holding the traveller's words (a word hit,
+  not meaning alone) can make a section, and only when they have a home (Hà Nội "bia" -> the
+  "Bia hơi …" restaurants); that section never takes the group's places.
 * A POI appears in one section only: the most specific one accepting it (deeper matching node,
   then fewer nodes; a keyword-only section is the most specific), then the one where it scores
   highest, then a required one, then the traveller's order. Sections are listed in the
@@ -36,6 +42,7 @@ from app.services.retrieval.scoring import (
     total,
 )
 from app.services.retrieval.taxonomy import covers, depth, top
+from app.services.routing.visits import VISIT_MINUTES
 
 PREFERRED_KEY = "preferred"
 PREFERRED_LABEL = "Địa điểm bạn thích"
@@ -48,14 +55,23 @@ CAP_CUISINE, CAP_WARD, CAP_FAMOUS = 2, 4, 3
 BROAD_CUISINES = frozenset({"vietnamese", "diner", "asian", "regional"})
 
 # A keyword's home is the node with at least this share of its weighted hits. A hit found only
-# in a description counts WEAK_WEIGHT; name and structured-column hits count 1. Starting values,
-# tune with the eval set.
+# in a description counts WEAK_WEIGHT; name and structured-column hits count 1. Re-checked on
+# the 2026-11-24 eval after re-embedding (92 cases, SIMILARITY_MIN 0.65): 0.45-0.55 give the
+# scattered hits of "chỗ cho trẻ em" a food home, which drops Đầm Sen and the malls; 0.65 and
+# 0.7 change no case. WEAK_WEIGHT 0.2-0.5 changes no case. (Before companions stayed in their
+# group's section, the value also decided which drinking texts kept the bars.)
 HOME_SHARE = 0.6
 WEAK_WEIGHT = 0.3
 WEAK_EVIDENCE = frozenset({"text", "semantic"})
 # Semantic hits kept per request: the closest places that can be suggested (open, not avoided,
-# not already picked). semantic.py over-fetches so these filters do not shrink the list.
+# not already picked). semantic.py over-fetches so these filters do not shrink the list. On the
+# same eval 15-20 drop Đầm Sen from "chỗ cho trẻ em"; 40 and 60 change no case.
 SEMANTIC_KEEP = 30
+# Without a home, weak hits are dropped only when at least this many strong hits carry the
+# keyword: one stray name hit ("rượu" -> a restaurant named Hầm Rượu) must not discard a dozen
+# description hits.
+STRONG_HITS_MIN = 3
+NO_MATCH_DEFAULTS = "Chưa tìm thấy địa điểm khớp “{}”; đang gợi ý chung"
 
 ANY_TIME = TripWindow(None, None, None)
 KeywordHits = dict[str, dict[str, Evidence]]  # request key -> poi id -> evidence
@@ -72,6 +88,8 @@ class SectionSpec:
     request: InterestRequest | None = None
     merged: list[InterestRequest] = field(default_factory=list)
     note: str | None = None
+    # A companion's own section (group None): only places this group does not accept.
+    outside: Group | None = None
 
     def specificity(self, poi: Poi) -> tuple[float, int]:
         """Deeper matching node, then fewer nodes. A keyword-only section is the most specific:
@@ -150,20 +168,50 @@ def keyword_home(found: dict[str, Evidence], pois: dict[str, Poi]) -> str | None
     return None
 
 
+def _home_sample(found: dict[str, Evidence], close: dict[str, float]) -> dict[str, Evidence]:
+    """Word hits plus the SEMANTIC_KEEP closest semantic hits, already picked places included:
+    the home does not move while the traveller picks places from the section."""
+    semantic = [i for i, e in found.items() if e == "semantic"]
+    keep = set(sorted(semantic, key=lambda i: (-close.get(i, 0.0), i))[:SEMANTIC_KEEP])
+    return {i: e for i, e in found.items() if e != "semantic" or i in keep}
+
+
 def prune_hits(
-    found: dict[str, Evidence], pois: dict[str, Poi]
+    found: dict[str, Evidence], pois: dict[str, Poi], close: dict[str, float] | None = None
 ) -> tuple[str | None, dict[str, Evidence]]:
     """(home, kept hits). A weak hit is kept only inside the home: a market whose description
-    mentions phở is not a phở place. Without a home, only strong hits are kept if any exist."""
+    mentions phở is not a phở place. Without a home, only strong hits are kept if there are at
+    least STRONG_HITS_MIN of them. The home is computed on _home_sample (``close`` grades the
+    semantic hits), the pruning applies to every hit."""
     found = {poi_id: evidence for poi_id, evidence in found.items() if poi_id in pois}
-    home = keyword_home(found, pois)
+    home = keyword_home(_home_sample(found, close or {}), pois)
     strong = {i: e for i, e in found.items() if e not in WEAK_EVIDENCE}
     if home is None:
-        return None, strong or found
+        return None, strong if len(strong) >= STRONG_HITS_MIN else found
     weak = {
         i: e for i, e in found.items() if e in WEAK_EVIDENCE and covers(home, pois[i].category)
     }
     return home, {**strong, **weak}
+
+
+def companion_hits(
+    found: dict[str, Evidence], pois: dict[str, Poi], group: Group
+) -> tuple[str | None, dict[str, Evidence]]:
+    """(home of the hits outside ``group``, kept hits) of a companion request (see the module
+    docstring). Every hit inside the group is kept. Outside it, the home is taken on the word
+    hits only (keyword_home); weak hits outside that home are dropped as in prune_hits. Without
+    a word hit or a home, every outside hit is dropped: cafés close in meaning to "kiếm chỗ
+    uống rượu" are not an answer, the group is."""
+    found = {i: e for i, e in found.items() if i in pois}
+    inside = {i: e for i, e in found.items() if accepts(group, pois[i])}
+    outside = {i: e for i, e in found.items() if i not in inside}
+    home = keyword_home({i: e for i, e in outside.items() if e != "semantic"}, pois)
+    if home is None:
+        return None, inside
+    kept = {
+        i: e for i, e in outside.items() if e not in WEAK_EVIDENCE or covers(home, pois[i].category)
+    }
+    return home, {**inside, **kept}
 
 
 def _closest_semantic(
@@ -189,28 +237,69 @@ def _host(groups: list[SectionSpec], home: str | None) -> SectionSpec | None:
     return best[1] if best else None
 
 
+def _merge(host: SectionSpec, request: InterestRequest) -> None:
+    host.merged.append(request)
+    host.required = host.required or request.strength == "include"
+
+
+def may_use_defaults(requests: list[InterestRequest]) -> bool:
+    """Only `other` wishes outside every group (or nothing) were asked: the default sections are
+    shown unless one of them has a place left to show (uses_defaults). service.retrieve fetches
+    the default sections' places whenever this holds, so the decision is taken once, in
+    build_specs."""
+    return not any(r.source == "interest" or r.group for r in requests)
+
+
+def uses_defaults(requests: list[InterestRequest], left: frozenset[str]) -> bool:
+    """``left``: keys of the requests with a place still to show (see build_specs)."""
+    return may_use_defaults(requests) and not any(r.key in left for r in requests)
+
+
 def build_specs(
-    plan: InterestPlan, hits: KeywordHits, homes: dict[str, str | None]
+    plan: InterestPlan,
+    hits: KeywordHits,
+    homes: dict[str, str | None],
+    found: frozenset[str] | None = None,
+    unsearched: frozenset[str] = frozenset(),
+    left: frozenset[str] | None = None,
 ) -> tuple[list[SectionSpec], list[str]]:
     """Section specs in the traveller's order, plus warnings about requests that cannot be
     served. ``hits`` are already pruned (see prune_hits) and ``homes`` maps request keys to the
-    keyword's home node."""
+    keyword's home node. ``found``: keys of the requests whose search found a place that can be
+    suggested (open, not avoided), picked or not. ``left``: keys of the requests with such a
+    place not picked yet; the default sections replace `other` wishes with none left. Both
+    default to the keys of ``hits``. ``unsearched``: keys of free-text requests the semantic
+    cap left to word matching (the service warns about them), so they are not reported as not
+    found."""
+    # Imported here: semantic imports this module.
+    from app.services.retrieval.semantic import negated
+
     warnings: list[str] = []
     requests = plan.requests
+    with_hits = frozenset(k for k, v in hits.items() if v)
+    found = with_hits if found is None else found
+    left = with_hits if left is None else left
     # Defaults unless something can fill a section: an `other` atom that finds no place may not
-    # describe a place at all ("đi cùng trẻ em"). service.retrieve fetches the same defaults.
-    if not any(r.source == "interest" or r.group or hits.get(r.key) for r in requests):
-        defaults = [
+    # describe a place at all ("đi cùng trẻ em"), so it is named in a warning, not as an empty
+    # section. A refusal ("không uống rượu") is not a wish for a place. A wish whose places
+    # are all picked found them: no warning, and no 'not found' for its empty section either.
+    if uses_defaults(requests, left):
+        for request in requests:
+            if request.key not in found | unsearched and not negated(request.raw):
+                warnings.append(NO_MATCH_DEFAULTS.format(request.raw))
+        requests = [
             InterestRequest(key, "prefer", "interest", group=key) for key in INTEREST_MAP.defaults
         ]
-        requests = [*defaults, *requests]
     groups: list[SectionSpec] = []
     for order, request in enumerate(requests):
         if request.group is None:
             continue
         group = INTEREST_MAP.groups[request.group]
-        if not group.nodes:
-            warnings.append(f"Không có dữ liệu cho “{request.raw}” tại TP.HCM")
+        # A group without data whose companion text found places ("ăn hải sản ven biển") is
+        # answered by those places, not by a no-data warning.
+        answered = any(r.companion == group.key and r.key in found for r in requests)
+        if not group.nodes and not answered:
+            warnings.append(f"Không có dữ liệu cho “{request.raw}” ở thành phố này")
         groups.append(
             SectionSpec(group.key, group.label, request.strength == "include", order, group, request)
         )
@@ -225,16 +314,33 @@ def build_specs(
         if not hits.get(request.key):
             # An `other` atom may not describe a place at all ("đi cùng trẻ em"): drop it
             # silently. A stated interest is warned about, and kept visible if required.
+            if request.key in unsearched:
+                continue
             if request.source == "interest":
                 warnings.append(f"Không tìm thấy địa điểm cho “{request.raw}”")
                 if request.strength == "include":
                     own.note = EMPTY_NOTE
                     specs.append(own)
             continue
-        host = _host(groups, homes.get(request.key))
+        home = homes.get(request.key)
+        companion = next(
+            (s for s in groups if s.group and s.group.nodes and s.group.key == request.companion),
+            None,
+        )
+        if companion is not None:
+            # Its hits inside the group are lifted there; the rest go to a host covering their
+            # home, else to a section of their own that never takes the group's places.
+            _merge(companion, request)
+            host = _host([s for s in groups if s is not companion], home)
+            if host is not None:
+                _merge(host, request)
+            elif home is not None:
+                own.outside = companion.group
+                specs.append(own)
+            continue
+        host = _host(groups, home)
         if host is not None:
-            host.merged.append(request)
-            host.required = host.required or request.strength == "include"
+            _merge(host, request)
         else:
             specs.append(own)
     specs.sort(key=lambda spec: spec.order)
@@ -253,6 +359,8 @@ def _hits_for(
 
     if spec.group is None:
         assert spec.request is not None
+        if spec.outside is not None and accepts(spec.outside, poi):
+            return None
         found = hit(spec.request)
         return None if found is None else [found]
     if not accepts(spec.group, poi):
@@ -378,13 +486,23 @@ def _best_placement(
     return best[1] if best else None
 
 
-def _finish(spec: SectionSpec, items: list[Scored], warnings: list[str]) -> SectionResult | None:
+def _finish(
+    spec: SectionSpec,
+    items: list[Scored],
+    warnings: list[str],
+    unsearched: frozenset[str] = frozenset(),
+) -> SectionResult | None:
     items = order_items(items, famous_capped=not spec.michelin_driven)
     for request in spec.merged:
+        # A companion's words only rank places: the group section answers the wish.
+        if request.key in unsearched or request.companion:
+            continue
         if not any(hit.raw == request.raw for item in items for hit in item.hits):
             warnings.append(f"Không tìm thấy địa điểm cho “{request.raw}”")
     if items:
         return SectionResult(spec, items)
+    if spec.outside is not None:  # a companion's places outside its group, all closed or picked
+        return None
     if spec.required:
         spec.note = spec.note or EMPTY_NOTE
         return SectionResult(spec, items)
@@ -403,27 +521,46 @@ def assemble(
     anchors: list[tuple[float, float]] | None = None,
     seed: int = 0,
     closeness: Closeness | None = None,
+    unsearched: frozenset[str] = frozenset(),
 ) -> tuple[list[SectionResult], list[str]]:
     """Score every candidate, assign it to one section and order each section. ``seed`` picks
     the order of equally relevant places (scoring.explore); ``closeness`` grades semantic
-    hits."""
+    hits; ``unsearched`` lists free-text requests past the semantic cap (build_specs)."""
     homes: dict[str, str | None] = {}
     pruned: KeywordHits = {}
     ctx = _Context(pruned, window, anchors or [], seed, closeness or {})
 
-    def usable(poi_id: str) -> bool:
+    def suggestable(poi_id: str) -> bool:
+        """In the candidates, not avoided and open during the trip; picked or not."""
         poi = pois.get(poi_id)
-        return (
-            poi is not None
-            and poi_id not in pinned_ids
-            and not avoided(poi, plan.avoid)
-            and ctx.hours(poi) is not None
-        )
+        return poi is not None and not avoided(poi, plan.avoid) and ctx.hours(poi) is not None
 
+    def usable(poi_id: str) -> bool:
+        return poi_id not in pinned_ids and suggestable(poi_id)
+
+    # Home and pruning first, on every hit (picked places too), then the SEMANTIC_KEEP closest
+    # usable semantic hits of what is left: picking places refills the section from its home.
+    found_any: set[str] = set()
+    left: set[str] = set()
+    companions = {
+        r.key: INTEREST_MAP.groups[r.companion]
+        for r in plan.requests
+        if r.companion and INTEREST_MAP.groups[r.companion].nodes
+    }
     for key, found in hits.items():
-        found = _closest_semantic(found, ctx.closeness.get(key, {}), usable)
-        homes[key], pruned[key] = prune_hits(found, pois)
-    specs, warnings = build_specs(plan, pruned, homes)
+        close = ctx.closeness.get(key, {})
+        if key in companions:
+            homes[key], kept = companion_hits(found, pois, companions[key])
+        else:
+            homes[key], kept = prune_hits(found, pois, close)
+        pruned[key] = _closest_semantic(kept, close, usable)
+        if any(map(suggestable, kept)):
+            found_any.add(key)
+        if any(map(usable, pruned[key])):
+            left.add(key)
+    specs, warnings = build_specs(
+        plan, pruned, homes, frozenset(found_any), unsearched, frozenset(left)
+    )
     members: dict[str, list[Scored]] = {spec.key: [] for spec in specs}
     for poi in pois.values():
         if poi.id in pinned_ids or avoided(poi, plan.avoid):
@@ -437,7 +574,7 @@ def assemble(
         last = max((spec.order for spec in specs), default=-1)
         specs.append(SectionSpec(PREFERRED_KEY, PREFERRED_LABEL, False, last + 1))
 
-    results = [_finish(spec, members[spec.key], warnings) for spec in specs]
+    results = [_finish(spec, members[spec.key], warnings, unsearched) for spec in specs]
     return [r for r in results if r is not None], list(dict.fromkeys(warnings))
 
 
@@ -464,4 +601,5 @@ def to_card(item: Scored) -> PoiCard:
         opening_hours_raw=poi.opening_hours_raw,
         website=poi.website,
         phone=poi.phone,
+        visit_minutes=VISIT_MINUTES.of_place(poi),
     )

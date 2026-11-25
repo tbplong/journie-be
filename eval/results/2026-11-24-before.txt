@@ -1,0 +1,145 @@
+ok   name-exact
+ok   name-unaccented
+ok   name-english-alias
+ok   name-typo
+ok   name-partial
+ok   name-ambiguous
+ok   name-not-found
+ok   interest-museum
+       museum: P@5=0.40 nDCG@5=0.32 top=['quang-san-art-museum-a719b8', 'tomuralee-gallery-fabda5', 'bao-tang-luc-luong-vu-trang-mien-dong-na-af47f7', 'bao-tang-chien-dich-ho-chi-minh-c7cfd8', 'vin-gallery-4a7a76']
+ok   interest-cafe-no-bars
+       cafe: P@5=0.00 nDCG@5=0.00 top=['cai-to-chim-1e64e9', 'cheese-coffee-2c704e', 'cloud-vape-and-coffee-f79db7', 'ca-phe-a-dor-4cbc69', 'ca-phe-anh-phan-810267']
+ok   food-plus-pho
+ok   cafe-pho-culture
+ok   keyword-michelin
+       kw:michelin: P@5=0.20 nDCG@5=0.37 top=['coco-dining-56185f', 'oc-ba-co-loc-coc-840d27', 'pho-hung-256207', 'hoi-an-sense-cf69d3', 'oc-dao-b6c515']
+ok   keyword-sao-michelin
+ok   keyword-vegetarian
+       food: P@5=0.00 nDCG@5=0.00 top=['gotcha-saigon-44911c', 'quan-chay-thoi-ke-a23a1b', 'nha-hang-chay-phat-hoa-7493ee', 'hashtag-cafe-b0eac7', 'quan-chay-sala-cc9a5b']
+ok   keyword-bar
+       nightlife: P@5=0.20 nDCG@5=0.39 top=['go2-bar-9cec48', 'king-beer-85-3ad3a0', 'terroir-wine-bar-36dddd', 'original-f7c68e', 'little-bear-wine-bar-00a51d']
+ok   keyword-seafood-vn
+       kw:seafood: P@5=0.00 nDCG@5=0.00 top=['hai-san-phu-loc-0f4c6b', 'oc-binh-dan-210c36', 'hai-san-giang-ghe-0e347f', 'quan-an-duong-thanh-08711d', 'hai-san-binh-thuan-dbfa5b']
+ok   keyword-banh-mi
+       kw:sandwich: P@5=0.40 nDCG@5=0.32 top=['gotcha-saigon-44911c', 'an-an-b0728d', 'banh-mi-huynh-hoa-c31355', 'banh-mi-hong-hoa-0c2f9c', 'ca-phe-hochi-838d2b']
+ok   other-atom-michelin
+       food: P@5=0.20 nDCG@5=0.39 top=['coco-dining-56185f', 'oc-ba-co-loc-coc-840d27', 'pho-hung-256207', 'hoi-an-sense-cf69d3', 'oc-dao-b6c515']
+ok   hours-early-morning-sat
+       food: P@5=0.00 nDCG@5=0.00 top=['cai-to-chim-1e64e9', 'cheese-coffee-2c704e', 'gotcha-saigon-44911c', 'quan-mi-nam-b9f64b', 'hu-tieu-lien-b7b0a9']
+ok   hours-late-night-sat
+       food: P@5=0.00 nDCG@5=0.00 top=['quan-an-co-ba-7d4967', 'gotcha-saigon-44911c', 'shamoji-robata-yaki-4ac287', 'banh-canh-cua-hai-cua-0b2ddc', 'pho-hung-256207']
+       nightlife: P@5=0.20 nDCG@5=0.39 top=['go2-bar-9cec48', 'terroir-wine-bar-36dddd', 'original-f7c68e', 'malt-saigon-bar-354bc7', 'home-bar-la-nha-5d2e37']
+ok   hours-monday-museums
+ok   avoid-kind
+       culture: P@5=0.00 nDCG@5=0.00 top=['chua-tam-son-ec97e3', 'chua-hung-phuoc-a5e713', 'nha-tho-thanh-jeanne-d-arc-c56f38', 'tuyen-lam-buddhist-temple-d734fe', 'chung-cu-42-nguyen-hue-8316ee']
+ok   avoid-name
+       shopping: P@5=0.20 nDCG@5=0.30 top=['lucky-plaza-f3a955', 'cho-dem-hanh-thong-tay-d637ef', 'cho-phu-lam-17c9b3', 'lotte-department-store-41c03e', 'tttm-romea-fdb0a5']
+ok   avoid-bar
+ok   preferred-boost
+       food: P@5=0.20 nDCG@5=1.00 top=['cuc-gach-quan-807d0d', 'cai-to-chim-1e64e9', 'quan-an-co-ba-7d4967', 'gangnam-bbq-house-fb10a1', 'cheese-coffee-2c704e']
+ok   beach-no-data
+ok   nature-required
+ok   no-interest-defaults
+ok   unsupported-destination
+ok   empty-extraction
+ok   semantic-work-cafe
+ok   semantic-sunset-view
+ok   semantic-kids
+ok   semantic-war-history
+ok   semantic-local-eatery
+FAIL drink-hcm-hard-eq
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 6}: best 0 < 6
+FAIL drink-danang-hard-eq
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 6}: best 0 < 6
+FAIL drink-hanoi-tonight
+       min_total {'section': 'nightlife', 'min': 10}: best None < 10
+FAIL drink-hcm-soft-prefer
+       min_total {'section': 'nightlife', 'min': 50}: best None < 50
+       top_category {'section': 'nightlife', 'k': 8, 'category': 'entertainment.nightlife', 'min': 8}: best None < 8
+       top_reason {'section': 'nightlife', 'k': 8, 'contains': 'Gợi ý theo mô tả', 'min': 8}: best None < 8
+FAIL drink-hcm-ruou
+       min_total {'min': 15}: best 1 < 15
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 6}: best 0 < 6
+FAIL drink-hanoi-ruou
+       min_total {'min': 15}: best 2 < 15
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 6}: best 2 < 6
+ok   drink-hue-guard
+FAIL nhau-hcm
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 5}: best 0 < 5
+       include_top {'k': 8, 'ids': ['deme-brewing-4ef6b2', 'gammer-beer-a278d0', 'gang1968-acoustic-beer-cfdf55', 'x-pose-beer-club-dde96c', 'king-beer-85-3ad3a0'], 'min': 2}: best 0 < 2
+       max_reason {'contains': 'Mô tả có “nhậu”', 'max': 3, 'in_description': 'nhậu'}: 17 cards ['coco-dining-56185f', 'cua-hang-xoi-che-2d13b6', 'district-federal-c1ab73', 'hana-buffet-2b5139', 'hem-quan-bf6354', 'mi-cay-sasin-655d42', 'nha-hang-bonjour-resto-5c21f6', 'nha-hang-gogi-8a43b3', 'nha-hang-huong-lua-8-874b9e', 'nha-hang-sumo-bbq-734597', 'nha-hang-the-brix-eatery-bar-lounge-5bbabd', 'nha-hang-y-mumtaz-8a3b19', 'parkhaus-thao-dien-df4d3d', 'quan-do-do-e290d7', 'quan-oc-bom-06e7ee', 'stoker-cf4442', 'torisho-con-ga-cuoi-a975f6']
+       max_reason {'contains': 'Mô tả có “nhậu”', 'max': 3, 'in_description': 'nhậu'}: description lacks the word on ['coco-dining-56185f', 'cua-hang-xoi-che-2d13b6', 'district-federal-c1ab73', 'hana-buffet-2b5139', 'hem-quan-bf6354', 'mi-cay-sasin-655d42', 'nha-hang-bonjour-resto-5c21f6', 'nha-hang-gogi-8a43b3', 'nha-hang-huong-lua-8-874b9e', 'nha-hang-sumo-bbq-734597', 'nha-hang-the-brix-eatery-bar-lounge-5bbabd', 'nha-hang-y-mumtaz-8a3b19', 'parkhaus-thao-dien-df4d3d', 'quan-do-do-e290d7', 'stoker-cf4442', 'torisho-con-ga-cuoi-a975f6']
+FAIL nhau-hanoi
+       min_total {'section': 'nightlife', 'min': 10}: best None < 10
+       include_top {'k': 6, 'ids': ['bia-hoi-cuong-hoi-cde88a', 'bia-hoi-cuong-nga-728af9', 'bia-hoi-hai-xom-le-trong-tan-6c9b38', 'bia-hoi-hai-xom-phan-ke-binh-40da2d', 'bia-hoi-ngoc-hang-82d530'], 'min': 3}: best 0 < 3
+FAIL bia-hanoi
+       include_top {'k': 6, 'ids': ['bia-hoi-cuong-hoi-cde88a', 'bia-hoi-cuong-nga-728af9', 'bia-hoi-hai-xom-le-trong-tan-6c9b38', 'bia-hoi-hai-xom-phan-ke-binh-40da2d', 'bia-hoi-ngoc-hang-82d530'], 'min': 4}: best 0 < 4
+ok   bia-hoi-hanoi-guard
+ok   bar-hcm-guard
+FAIL pub-hcm
+       include_top {'section': 'nightlife', 'k': 5, 'ids': ['the-tavern-pub-dd806f'], 'min': 1}: best 0 < 1
+FAIL pub-hanoi
+       include_top {'section': 'nightlife', 'k': 3, 'ids': ['king-pirates-pub-7a2cca'], 'min': 1}: best 0 < 1
+FAIL rooftop-hcm
+       include_top {'section': 'nightlife', 'k': 5, 'ids': ['chang-vang-rooftop-50b2f6'], 'min': 1}: best 0 < 1
+ok   rooftop-danang-guard
+FAIL craft-beer-hcm
+       include_top {'k': 8, 'ids': ['deme-brewing-4ef6b2', 'gammer-beer-a278d0', 'gang1968-acoustic-beer-cfdf55', 'x-pose-beer-club-dde96c', 'king-beer-85-3ad3a0'], 'min': 2}: best 0 < 2
+FAIL craft-beer-hue
+       include_top {'k': 6, 'ids': ['the-cham-craft-beer-whisky-da8e8e', 'imperial-craft-bia-brewpub-0382c5'], 'min': 2}: best 1 < 2
+FAIL bia-craft-danang
+       min_total {'section': 'nightlife', 'min': 8}: best None < 8
+FAIL cocktail-hcm
+       include_top {'k': 8, 'ids': ['aex-cocktail-bar-ffcef0', 'bardo-cocktails-arts-a4d736', 'co-2fb9d0', 'illusion-bar-3c7504', 'lost-birds-bar-45ab79', 'mary-jane-s-the-bar-5bf9d0', 'original-f7c68e', 'shinsky-chill-c2ab67', 'summer-experiment-d312a1', 'symposium-cocktail-bar-and-lounge-b9d470', 'the-head-cage-948a7c', 'tu-bar-f508c3', 'urban-7-cocktail-lounge-95ecd5', 'xao-xac-bar-e5d689', 'ygg-bar-original-classic-cocktail-a23093', 'my-house-86c259', 'the-pi-1b0852'], 'min': 6}: best 1 < 6
+FAIL wine-hcm
+       top_category {'k': 5, 'category': 'food.restaurant', 'max': 1}: 3 > 1
+       include_top {'k': 5, 'ids': ['little-bear-wine-bar-00a51d', 'terroir-wine-bar-36dddd', 'mad-wine-bar-eatery-0bface'], 'min': 3}: best 1 < 3
+ok   no-alcohol-hcm
+FAIL cho-hcm
+       min_total {'max': 40}: 349 > 40
+       max_reason {'contains': 'Mô tả có “chợ”', 'in_description': 'chợ'}: description lacks the word on ['2pm-coffee-2d1408', '96b-cafe-roastery-4ed744', 'a-by-tung-86db8e', 'a-taste-of-saigon-ff06c6', 'agra-mahal-fb3af0', 'akuna-restaurant-c34d03', 'am-thuc-chay-huong-sen-chay-ngon-go-vap-7febe2', 'am-thuc-sinh-thai-song-que-5-ade0f6', 'amigo-grill-farewell-dinner-1ec161', 'anan-saigon-9a8b41', 'au-parc-cafe-9acc42', 'banana-mama-rooftop-bar-kitchen-saigon-c807bd', 'banh-cuon-hai-nam-0dfcd7', 'banh-cuon-tay-ho-127-fbd7ed', 'banh-khot-co-ba-vung-tau-3a4ebf', 'banh-mi-bay-ho-db4b0c', 'banh-mi-chay-1ec56e', 'banh-mi-cu-ly-b3969c', 'banh-mi-hoa-ma-6537be', 'banh-mi-hong-hoa-0c2f9c', 'banh-uot-ban-me-71a13f', 'banh-xeo-ba-hai-4dec5f', 'banh-xeo-que-nau-6c3a9d', 'baoz-dimsum-715ffe', 'be-an-bistro-cce860', 'bep-chay-nha-zen-20621a', 'bep-me-in-b2f019', 'bo-ne-ba-nui-95ecdc', 'boomerang-bistro-saigon-30dada', 'buddha-chay-8c1e54', 'bun-bo-hue-14b-c3e0d6', 'bun-cha-ha-noi-26-1ccfa5', 'bun-dau-nha-lam-home-made-4812e4', 'bun-rieu-yen-22c04e', 'bun-thit-nuong-chi-tuyen-7f83f0', 'bun-thit-nuong-hoang-van-5d65bf', 'bun-thit-nuong-kieu-bao-aba987', 'bun-thit-nuong-kieu-bao-c91cbc', 'burger-boss-f340df', 'ca-phe-anh-roastery-9660cc', 'ca-phe-bb9bae', 'ca-phe-family-garden-5f9152', 'ca-phe-mien-dong-thao-3d2c90', 'ca-phe-nguyen-chat-b69bcd', 'ca-phe-passio-4e10b3', 'ca-phe-sapa-4e12c9', 'ca-phe-snob-6c2ae5', 'ca-phe-tra-early-morning-fec733', 'ca-phe-way-a1d93c', 'cafe-bistro-kingdom-56dae2', 'cafe-bui-van-b5e5e3', 'cafe-trung-nguyen-28db85', 'cai-coi-f49362', 'cay-bang-rooftop-cafe-65e79e', 'caztus-ice-blended-70e18f', 'chang-thai-cafe-bistro-02bdd0', 'chao-ca-8e3168', 'chao-ech-singapore-86-100776', 'chat-coffee-f5dd7d', 'cloud-pot-a94c1a', 'cloud-vape-and-coffee-f79db7', 'co-lieng-9f1b1d', 'coastal-068141', 'coco-dining-56185f', 'coffee-way-binh-gia-2c36c0', 'com-chay-ngoc-y-4c54b5', 'com-chay-thien-phuoc-e3ee86', 'com-ga-hai-nam-aad790', 'com-ga-hai-nam-singapore-eat-lah-f7a462', 'com-que-muoi-kho-f406fb', 'com-tam-a-dung-b61569', 'com-tam-ba-son-d4ab9b', 'com-tam-moc-9849d7', 'com-tam-ong-map-a8a161', 'com-tam-tu-map-159a08', 'cong-ca-phe-033d3d', 'cosmos-coffee-88bb91', 'cua-hang-xoi-che-2d13b6', 'cuc-gach-quan-807d0d', 'cung-dinh-bbq-buffet-e2bd55', 'curry-licious-92bf0f', 'dangdo-cafe-04a723', 'dau-homemade-bun-dau-mam-tom-0057b1', 'dieu-garden-cafe-1f470d', 'dimsum-thuan-phat-063169', 'district-federal-c1ab73', 'dong-pho-8a4e44', 'du-yen-e66296', 'en-restaurant-event-space-f1ede1', 'esta-28f96a', 'fashionista-cafe-bce683', 'feeling-tea-4cdc6e', 'ga-ta-son-ca-e31cdc', 'gamagol-b39c4c', 'gangnam-bbq-house-fb10a1', 'gartenstadt-restaurant-b9d0f1', 'gbomb-cuisine-03c196', 'gong-cha-4cf4fb', 'gong-cha-thao-dien-pearl-29d979', 'gotcha-saigon-44911c', 'gozar-cafe-874942', 'hai-duong-quan-118a-trieu-quang-phuc-aa9eee', 'hai-san-bien-nho-b1d631', 'hai-san-giang-ghe-0e347f', 'hai-san-goc-pho-29b53a', 'half-past-six-fae665', 'hana-buffet-2b5139', 'hanayuki-518562', 'hang-duong-sakura-9f1e0f', 'hanuri-271e6a', 'hao-hue-quan-79ff4f', 'hashtag-cafe-b0eac7', 'healin-coffee-04a48a', 'heli-vegetarian-bistro-19d295', 'hello-coffee-afaa8a', 'hem-quan-bf6354', 'hi-end-coffee-022f0a', 'highland-coffee-184-lam-van-ben-phuong-t-2b1ceb', 'highlands-coffee-ad2487', 'hoa-tuc-765c59', 'hoang-ty-f78ca2', 'hoi-an-sense-cf69d3', 'hong-tra-ngo-gia-00cffd', 'hu-tieu-chay-cay-de-7a1a29', 'hua-wu-lou-39cae8', 'hue-ky-mi-gia-6760b4', 'juju-nuong-kzone-af3922', 'jumbo-seafood-27dae6', 'k-arabica-specialty-coffee-454638', 'kafka-cafe-1b5c13', 'katinat-45512a', 'katinat-811594', 'keng-keng-beer-d3c07d', 'kofuku-coffee-359dba', 'kome-51b037', 'krishna-3ca666', 'la-fontaine-french-bistrot-ff867b', 'lagom-cafe-72db0b', 'landing-milk-tea-and-coffee-6964dd', 'lau-ca-keo-a7dd30', 'lau-cua-245-ea75b9', 'lau-de-duc-duong-170fca', 'lau-de-nam-phat-316109', 'lau-ga-la-e-ot-xanh-1a97c3', 'lau-hong-kong-ong-sui-de053e', 'leu-6b69c8', 'libra-coffee-5c96c3', 'lim-veggie-bistro-f02977', 'lion-city-cafe-restaurant-1192d7', 'little-bodhi-tree-saigon-fc33c0', 'little-du-mien-cafe-6ce12e', 'long-trieu-94934c', 'lotteria-6951fd', 'lotteria-bach-dang-6f6ffd', 'lotteria-binh-long-c4eac4', 'lune-restaurant-and-bar-20aae6', 'madame-lam-nha-hang-mon-viet-a0292c', 'mako-coffee-816d6e', 'mala-thai-9044ac', 'man-moi-dc7824', 'matchandeul-bbq-293a95', 'mekong-merchant-saigon-53f834', 'metta-vegetarian-625d70', 'mi-cay-sasin-655d42', 'mi-ga-ngu-long-3f8c45', 'mi-quang-sam-74765a', 'missing-garden-9678c5', 'mixue-35be0d', 'mo-det-coffee-take-away-5f1f5c', 'mon-an-nhat-tanaka-tei-b75acb', 'morico-ef8c5a', 'muteki-4a8987', 'nam-phat-54561c', 'nang-cafe-c354ed', 'nem-nuong-nia-277750', 'nem-nuong-oanh-vy-813df6', 'nha-hang-241-8a6d71', 'nha-hang-am-thuc-316-5bc53b', 'nha-hang-am-thuc-phung-vu-42d1f1', 'nha-hang-am-thuc-que-nha-bf7590', 'nha-hang-asian-kitchen-b7df33', 'nha-hang-ben-song-6f4c31', 'nha-hang-bong-sung-c79d91', 'nha-hang-bonjour-resto-5c21f6', 'nha-hang-cay-sake-6b890a', 'nha-hang-chabad-vietnam-841716', 'nha-hang-chay-bo-de-tinh-tam-de68ba', 'nha-hang-chay-huong-sen-fac2cc', 'nha-hang-chay-kim-sa-593483', 'nha-hang-chay-ngoc-tho-07a14d', 'nha-hang-chay-phat-hoa-7493ee', 'nha-hang-chay-phi-nhung-7c3f60', 'nha-hang-chay-sesame-2a1749', 'nha-hang-chay-viet-an-0c73c2', 'nha-hang-chay-vo-uy-111bad', 'nha-hang-chuck-s-burgers-pvc-242a65', 'nha-hang-ciao-bella-e972c5', 'nha-hang-den-long-acd440', 'nha-hang-dieu-hanh-3f846c', 'nha-hang-downtown-steakhouse-cd5430', 'nha-hang-ech-xanh-02a02a', 'nha-hang-elgin-saigon-0825cc', 'nha-hang-gogi-8a43b3', 'nha-hang-hai-san-phi-0e5f9b', 'nha-hang-halal-amin-be19d4', 'nha-hang-han-quoc-gogizip-bbq-69aff0', 'nha-hang-here-now-26908d', 'nha-hang-hoa-bien-5593dd', 'nha-hang-hum-vegetarian-88cbaa', 'nha-hang-huong-cau-ae784a', 'nha-hang-huong-huyen-392c99', 'nha-hang-huong-lua-8-874b9e', 'nha-hang-huong-pho-3385b9', 'nha-hang-ippudo-6b119e', 'nha-hang-kichi-kichi-af1ea4', 'nha-hang-lan-anh-6978dd', 'nha-hang-mandarine-14799b', 'nha-hang-mia-dining-c46c95', 'nha-hang-mujo-d132b7', 'nha-hang-ngon-401f22', 'nha-hang-ot-do-86a7cc', 'nha-hang-phuong-nam-fbc7e7', 'nha-hang-poke-saigon-7ef72a', 'nha-hang-quynh-anh-d397e2', 'nha-hang-san-vuon-72-3884dd', 'nha-hang-secret-garden-f83d42', 'nha-hang-skewers-87e963', 'nha-hang-som-tum-thai-18c24e', 'nha-hang-sumo-bbq-734597', 'nha-hang-sushi-hokkaido-sachi-bfaba6', 'nha-hang-thach-han-3ff5e2', 'nha-hang-the-brix-eatery-bar-lounge-5bbabd', 'nha-hang-tokyo-deli-f00226', 'nha-hang-tram-chim-25fac0', 'nha-hang-tuan-map-c3b38a', 'nha-hang-ut-ca-mau-bf7cdb', 'nha-hang-viet-trung-gia-1b2b68', 'nha-hang-y-mumtaz-8a3b19', 'oc-di-toan-74c16c', 'oc-oanh-9eb78d', 'okra-food-bar-665e32', 'ong-tien-quan-40e20a', 'parkhaus-thao-dien-df4d3d', 'pasha-garden-lounge-972756', 'pasta-fresca-215d0b', 'pha-lau-di-nui-b440d0', 'pha-lau-rubi-a58b9d', 'phat-thanh-coffee-c707a0', 'pho-cao-van-292b71', 'pho-chay-nhu-d3f88c', 'pho-ga-o-kia-7d1fdc', 'pho-hoang-46c4d0', 'pho-huynh-tram-4fb18c', 'pho-mien-ga-ky-dong-d8c614', 'pho-minh-e037d7', 'pho-trang-6f430e', 'pho-viet-nam-702efb', 'pizza-hut-8c69e5', 'pizza-piatto-e21d58', 'prem-bistro-918f08', 'quan-am-thuc-308-204183', 'quan-an-bun-thit-nuong-98a46f', 'quan-an-duong-thanh-08711d', 'quan-an-huong-son-b06b6e', 'quan-an-steak-bin-pizza-322852', 'quan-bui-447700', 'quan-chay-chi-cu-69a818', 'quan-chay-hoang-phuc-96aabd', 'quan-chay-quan-am-d0078d', 'quan-chay-sala-cc9a5b', 'quan-chay-truc-lam-bo-de-37fa5a', 'quan-com-142-8924dd', 'quan-com-chay-thanh-trai-6b5503', 'quan-com-tam-nho-649dea', 'quan-de-k-rong-pa-go-vap-e8e1c4', 'quan-hu-tieu-nam-vang-72b278', 'quan-la-bo-de-b99d77', 'quan-lau-de-nui-ngu-2-6a9785', 'quan-muc-280-42118d', 'quan-ngon-138-18a33f', 'quan-oc-cay-bang-f49217', 'quan-oc-minh-huong-501794', 'quan-oc-nhi-2n-ff989b', 'quan-oc-soc-c3e5fa', 'quan-pho-179-541db5', 'quan-pho-2000-60be34', 'quan-pho-nhu-c87b30', 'quan-ut-huong-764914', 'quince-eatery-ae4c06', 'rau-cu-nam-vegan-46b475', 'reddoor-77f10c', 'rio-restaurant-7f1617', 'ristreet-b7b4a2', 'saigon-chic-coffee-ea47db', 'sen-nha-hang-chay-980178', 'song-006013', 'steak-bin-pizza-99647c', 'steak-bin-pizza-b17bcf', 'stoker-cf4442', 'sukdon-bbq-179862', 'sushi-107-36778f', 'sushi-hokkaido-sachi-crescent-mall-3e7f24', 'sushi-hokkaido-sachi-d7091b', 'sushi-shin-ebde16', 'sushi-tokoyaki-panda-a03d84', 'tami-coffee-chay-ae5172', 'tan-lap-quan-3e4c2a', 'tartine-61b370', 'tartine-c35f3a', 'terraviva-pizza-488804', 'the-babo-cafe-872c33', 'the-banned-71d45c', 'the-coffee-house-8230f5', 'the-joi-factory-ba8405', 'the-log-restaurant-0ce631', 'the-lunch-lady-dfe56a', 'the-river-oriental-f426b8', 'the-seat-cafe-28df8d', 'the-snap-cafe-82493e', 'the-tching-141b0f', 'the-workstation-coffee-550e1a', 'thien-khoi-afe324', 'thien-nhien-ed8b5d', 'tous-les-jours-b133f7', 'tuktuk-thai-bistro-788eff', 'tung-s-f82f7c', 'ucc-coffee-roastery-7a6e5a', 'viet-village-dcf0fb', 'vietnam-house-restaurant-25443c', 'vit-quay-my-phung-4f2eba', 'vit-quay-tran-quang-ky-f71e2d', 'walya-coffee-f90190', 'warning-zone-garden-544073']
+ok   chua-hcm-guard
+FAIL kids-hcm
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'max': 0}: 1 > 0
+FAIL quiet-hue
+       top_category {'k': 10000, 'category': 'entertainment.nightlife', 'max': 0}: 1 > 0
+       include_top {'k': 10000, 'ids': ['tinh-garden-vegetarian-2227ad'], 'max': 0}: 1 > 0
+ok   cafe-quiet-hcm-guard
+FAIL rain-hcm
+       include_top {'k': 8, 'ids': ['home-bar-la-nha-5d2e37'], 'max': 0}: 1 > 0
+FAIL sunset-danang
+       min_total {'min': 3}: best 1 < 3
+       include_top {'k': 8, 'ids': ['vivid-rooftop-bar-pool-9ea615', 'horizon-bar-38bbc3', 'brilliant-top-bar-321bf4', 'marine-sky-bar-8da220', 'ocean-sky-bar-65786b', 'mauna-kea-skybar-a6b0ff', 'the-gypsy-rooftop-restaurant-bar-29e2c3', 'cau-song-han-han-river-bridge-bb50c0', 'cong-vien-apec-12dab7'], 'min': 3}: best 1 < 3
+ok   war-history-guard
+FAIL live-music-hcm
+       min_total {'min': 3}: best 1 < 3
+       include_top {'k': 8, 'ids': ['carmen-bar-792146', 'phong-tra-khong-ten-5fd304', 'gang1968-acoustic-beer-cfdf55', 'go2-bar-9cec48'], 'min': 2}: best 0 < 2
+FAIL live-music-hanoi
+       include_top {'k': 8, 'ids': ['ay-lounge-c006db', 'polygon-musik-4a3ac9', 'trixie-cafe-lounge-a2733c', 'the-hanoi-social-club-de7ae0', 'manzi-art-space-and-cafe-a805dd'], 'min': 3}: best 1 < 3
+FAIL nhau-tonight-hanoi
+       min_total {'section': 'nightlife', 'min': 10}: best None < 10
+       include_top {'k': 6, 'ids': ['quan-nhau-tu-do-505-minh-khai-36e86f', 'quan-nhau-tu-do-75-yen-lang-0bbb07'], 'min': 2}: best 0 < 2
+ok   budget-eq-hcm-guard
+ok   beach-danang-bien
+FAIL beach-danang-bai-bien
+       top_category {'k': 10000, 'category': 'food.restaurant', 'max': 0}: 9 > 0
+       no_section_like 'bãi biển': sections ['kw:bai_bien']
+ok   negative-together-hcm
+FAIL nosem-drink-eq
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 6}: best 0 < 6
+FAIL nosem-ruou
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 6}: best 0 < 6
+FAIL nosem-nhau
+       top_category {'k': 8, 'category': 'entertainment.nightlife', 'min': 6}: best 0 < 6
+ok   nosem-bar
+
+| metric | value |
+|---|---|
+| cases passing all checks | 47/76 |
+| name resolution accuracy | 9/9 |
+| mean P@5 (24 sections) | 0.390 |
+| mean nDCG@5 | 0.436 |
+| sections with a relevant top-5 item | 0.750 |
+| famous share of top 6 (89 sections) | 0.097 |
+| distinct wards in top 6 | 3.90 |
+| must_not_contain violations | 0 |

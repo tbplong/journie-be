@@ -1,5 +1,9 @@
+import importlib.util
 import json
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from app.services.retrieval.ingest import prepare_row, seed_names, taxonomy_issues
 from app.services.retrieval.taxonomy import Taxonomy
@@ -85,3 +89,60 @@ def test_accent_columns_use_only_text_as_written() -> None:
     assert all(spot.endswith("B") for spot in lexemes["'cho'"].split(","))
     assert all(spot.endswith("A") for spot in lexemes["'chợ'"].split(","))
     assert "'khu'" in prepared["search_lex"]
+
+
+def load_import_script() -> Any:
+    pytest.importorskip("pyarrow")  # dependency group "data"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "import_parquet.py"
+    spec = importlib.util.spec_from_file_location("import_parquet", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class StoredRows:
+    """Stands in for a psycopg connection: answers the one SELECT of description_updates."""
+
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self.rows, self.queries = rows, []
+
+    def execute(self, query: Any, params: Any = None) -> "StoredRows":
+        self.queries.append(query.as_string(None) if hasattr(query, "as_string") else query)
+        return self
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self.rows
+
+
+def test_only_description_updates_existing_rows_with_stored_search_inputs() -> None:
+    script = load_import_script()
+    # id, description, name, name_en, cuisine, features, michelin (as stored, edited by hand)
+    stored = StoredRows(
+        [
+            ("x", "Khu chợ lâu đời.", "Chợ Bến Thành", "Ben Thanh Market", ["seafood"], [], None),
+            ("y", "Quán bia hơi.", "Bia Hơi Hà Nội", None, [], [], None),
+        ]
+    )
+    file_rows = [
+        row(description="Chợ lâu đời bán hải sản và đồ lưu niệm."),
+        row(id="y", name="Bia Hơi Hà Nội", description="Quán bia hơi."),  # unchanged
+        row(id="z", description="Không có trong bảng."),  # not in pois: never inserted
+    ]
+    found, updates = script.description_updates(stored, file_rows, {}, "v1")
+    assert found == 2
+    assert [set(update) for update in updates] == [{"id", "description", "search_lex"}]
+    assert updates[0]["id"] == "x"
+    assert updates[0]["description"] == "Chợ lâu đời bán hải sản và đồ lưu niệm."
+    lexemes = {part.split(":", 1)[0] for part in updates[0]["search_lex"].split()}
+    assert {"'seafood'", "'lưu'", "'niệm'"} <= lexemes  # stored cuisine kept, new words added
+    assert script.DESCRIPTION_UPDATE.startswith("UPDATE pois SET description = ")
+    assert "INSERT" not in script.DESCRIPTION_UPDATE
+    assert all(query.startswith("SELECT") for query in stored.queries)
+
+
+def test_only_refuses_prune() -> None:
+    script = load_import_script()
+    with pytest.raises(SystemExit) as stop:
+        script.main(["places.parquet", "--only", "description", "--prune"])
+    assert stop.value.code == 2

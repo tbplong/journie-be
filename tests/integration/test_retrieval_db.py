@@ -22,9 +22,16 @@ from app.schemas.retrieval import RetrievalRequest, RetrievalResponse
 from app.services.retrieval import candidates, names
 from app.services.retrieval.config import INTEREST_MAP
 from app.services.retrieval.db import reuse
-from app.services.retrieval.interests import AvoidRules
-from app.services.retrieval.service import retrieve
-from app.services.retrieval.text import fold_case, has_diacritics, lexeme_query, norm
+from app.services.retrieval.interests import AvoidRules, InterestRequest
+from app.services.retrieval.poi import DEFAULT_CITY
+from app.services.retrieval.service import SUPPORTED_DESTINATIONS, retrieve
+from app.services.retrieval.text import (
+    fold_case,
+    has_diacritics,
+    lexeme_query,
+    norm,
+    tone_variant,
+)
 from tests.test_retrieval_names_interests import BASE
 from tests.test_retrieval_taxonomy import TAXONOMY
 
@@ -120,8 +127,8 @@ def test_avoid_finds_every_branch_of_a_chain() -> None:
         rows.append(("namesake", "Phố Hùng", ["pho hung"], ["phố hùng"]))
         async with conn.cursor() as cur:
             await cur.executemany(
-                "INSERT INTO pois (id, name, kind, name_keys, name_keys_vi)"
-                " VALUES (%s, %s, 'restaurant', %s, %s)",
+                "INSERT INTO pois (id, name, kind, city, name_keys, name_keys_vi)"
+                f" VALUES (%s, %s, 'restaurant', '{DEFAULT_CITY}', %s, %s)",
                 rows,
             )
         return await names.exact_ids(conn, "Phở Hùng"), await names.exact_ids(conn, "pho hung")
@@ -161,9 +168,39 @@ def test_pinned_avoid_and_status() -> None:
     assert [p.id for p in response.pinned] == ["dinh-doc-lap-97d379"]
     listed = {i.id for s in response.sections for i in s.items}
     assert "cho-ben-thanh-68e3af" not in listed
-    assert retrieval(destination="Hanoi", interests=["food"]).status == "unsupported_destination"
+    assert retrieval(destination="Da Lat", interests=["food"]).status == "unsupported_destination"
     assert retrieval(destination="Hồ Chí Minh", interests=["food"]).status == "ok"
     assert response.meta.data_version == "places_1000"
+
+
+@pytest.mark.parametrize(("destination", "city"), SUPPORTED_DESTINATIONS.items())
+def test_a_city_returns_only_its_own_places(destination: str, city: str) -> None:
+    response = retrieval(destination=destination, interests=["food", "culture"])
+    ids = [item.id for section in response.sections for item in section.items]
+    assert response.status == "ok" and ids
+
+    async def job(conn: AsyncConnection) -> set[str]:
+        cursor = await conn.execute("SELECT DISTINCT city FROM pois WHERE id = ANY(%s)", (ids,))
+        return {row[0] for row in await cursor.fetchall()}
+
+    assert run(job) == {city}
+
+
+def test_name_lookup_stays_in_the_city() -> None:
+    hanoi = SUPPORTED_DESTINATIONS["Hanoi"]
+
+    async def job(conn: AsyncConnection) -> tuple[str, set[str], set[str]]:
+        cursor = await conn.execute(
+            "SELECT id, name FROM pois WHERE city = %s ORDER BY id LIMIT 1", (hanoi,)
+        )
+        row = await cursor.fetchone()
+        assert row
+        here = await names.lookup(conn, row[1], hanoi)
+        elsewhere = await names.lookup(conn, row[1])
+        return row[0], {h.poi_id for h in here.hits}, {h.poi_id for h in elsewhere.hits}
+
+    poi_id, here, elsewhere = run(job)
+    assert poi_id in here and poi_id not in elsewhere
 
 
 def test_quality_bar_applies_to_suggestions_not_to_named_places() -> None:
@@ -216,37 +253,80 @@ WRITTEN_SQL = "SELECT u.lexeme FROM unnest(p.search_lex) AS u WHERE 'A' = ANY(u.
 
 def test_accent_rule_holds_for_every_colliding_word_in_the_data() -> None:
     """Data-driven: every accented word that shares its folded form with another word in the
-    corpus (phở/phố, bò/bộ, ...) matches exactly the POIs that contain it as written, or that
-    contain its folded form written without accents. Grows with the data, no word list."""
+    corpus (phở/phố, bò/bộ, ...) matches exactly the POIs that contain it as written (in either
+    tone placement: hoá/hóa, text.tone_variant), or that contain its folded form written without
+    accents; the strict query (descriptions) exactly the POIs that contain it as written. Grows
+    with the data, no word list."""
 
-    async def job(conn: AsyncConnection) -> tuple[list[str], list, list]:
+    async def job(conn: AsyncConnection) -> tuple[list[str], list, list, list]:
         cur = await conn.execute(f"SELECT DISTINCT w FROM pois p, LATERAL ({WRITTEN_SQL}) AS t(w)")
         groups: defaultdict[str, set[str]] = defaultdict(set)
         for (word,) in await cur.fetchall():
             groups[norm(word)].add(word)
         forms = sorted(w for group in groups.values() if len(group) > 1 for w in group
                        if has_diacritics(w))
-        args = (forms, [norm(w) for w in forms], [lexeme_query(w) for w in forms])
-        table = "unnest(%s::text[], %s::text[], %s::text[]) AS f(word, folded, q)"
+        args = (
+            forms,
+            [norm(w) for w in forms],
+            [lexeme_query(w) for w in forms],
+            [lexeme_query(w, strict=True) for w in forms],
+            [tone_variant(w) or w for w in forms],
+        )
+        table = (
+            "unnest(%s::text[], %s::text[], %s::text[], %s::text[], %s::text[])"
+            " AS f(word, folded, q, qs, tone)"
+        )
         cur = await conn.execute(
             f"""SELECT f.word, p.id FROM {table} JOIN pois p ON p.search_lex @@ f.q::tsquery
                 WHERE NOT EXISTS (SELECT 1 FROM ({WRITTEN_SQL}) AS t(w)
-                                  WHERE t.w IN (f.word, f.folded))""",
+                                  WHERE t.w IN (f.word, f.tone, f.folded))""",
             args,
         )
         wrong = await cur.fetchall()
         cur = await conn.execute(
-            f"""SELECT f.word, p.id FROM {table} CROSS JOIN pois p
-                WHERE EXISTS (SELECT 1 FROM ({WRITTEN_SQL}) AS t(w) WHERE t.w = f.word)
-                  AND NOT p.search_lex @@ f.q::tsquery""",
+            f"""SELECT f.word, p.id FROM {table} JOIN pois p ON p.search_lex @@ f.qs::tsquery
+                WHERE NOT EXISTS (SELECT 1 FROM ({WRITTEN_SQL}) AS t(w)
+                                  WHERE t.w IN (f.word, f.tone))""",
             args,
         )
-        return forms, wrong, await cur.fetchall()
+        wrong_strict = await cur.fetchall()
+        cur = await conn.execute(
+            f"""SELECT f.word, p.id FROM {table} CROSS JOIN pois p
+                WHERE EXISTS (SELECT 1 FROM ({WRITTEN_SQL}) AS t(w) WHERE t.w = f.word)
+                  AND NOT (p.search_lex @@ f.q::tsquery AND p.search_lex @@ f.qs::tsquery)""",
+            args,
+        )
+        return forms, wrong, wrong_strict, await cur.fetchall()
 
-    forms, wrong, missed = run(job)
+    forms, wrong, wrong_strict, missed = run(job)
     assert forms, "the corpus has no colliding words to check"
     assert wrong == [], f"matched without the word as written: {wrong[:10]}"
+    assert wrong_strict == [], f"strict query matched another spelling: {wrong_strict[:10]}"
     assert missed == [], f"POIs containing the word were not matched: {missed[:10]}"
+
+
+@pytest.mark.parametrize("word", ["chợ", "nhậu", "phở"])
+def test_a_description_hit_holds_the_accented_word_as_written(word: str) -> None:
+    """'Mô tả có “chợ”' only when the text has 'chợ', never the word 'cho' (for); a name hit
+    still accepts a name written without accents."""
+
+    async def job(conn: AsyncConnection) -> tuple[dict[str, str], list[str]]:
+        request = InterestRequest(word, "prefer", "interest", text=norm(word))
+        params = candidates.eligibility(AvoidRules(), set())
+        found = await candidates.keyword_hits(conn, request, params)
+        text_ids = [poi_id for poi_id, evidence in found.items() if evidence == "text"]
+        cur = await conn.execute(
+            f"""SELECT p.id FROM pois p WHERE p.id = ANY(%s)
+                AND NOT EXISTS (SELECT 1 FROM ({WRITTEN_SQL}) AS t(w) WHERE t.w = %s)""",
+            (text_ids, word),
+        )
+        return found, [row[0] for row in await cur.fetchall()]
+
+    found, wrong = run(job)
+    assert found, f"{word!r} matched nothing in {DEFAULT_CITY}"
+    assert wrong == [], f"description hits without {word!r} as written: {wrong[:10]}"
+    if word == "chợ":  # 11 markets by name; the word "cho" appears in ~430 descriptions
+        assert len(found) <= 40, len(found)
 
 
 def test_accented_interest_never_matches_a_different_accented_word() -> None:
