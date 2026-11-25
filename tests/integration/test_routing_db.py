@@ -4,15 +4,18 @@ is the straight-line estimate, so the test does not depend on a network service.
     uv run pytest -m integration
 """
 
+from datetime import datetime, time, timedelta
+
 import httpx
 import pytest
 from psycopg import AsyncConnection
 
 from app.core.config import Settings
-from app.schemas.routing import DaysResponse, RoutingRequest, RoutingResponse
+from app.schemas.routing import TRIP_TZ, DaysResponse, RoutingRequest, RoutingResponse
 from app.services.retrieval.db import reuse
 from app.services.routing.rules import RULES
 from app.services.routing.service import plan, plan_days
+from app.services.routing.visits import VISIT_MINUTES
 from tests.integration.test_retrieval_db import retrieval, run
 
 pytestmark = pytest.mark.integration
@@ -136,3 +139,50 @@ def test_pinning_the_suggested_split_keeps_every_place() -> None:
     routed = solve_ids(ordered, "2026-11-22T21:00", days=False, pins=pins)
     assert [[stop.poi.id for stop in day.stops] for day in routed.days] and not routed.unscheduled
     assert [len(day.stops) for day in routed.days] == list(map(len, split))
+
+
+def test_days_that_end_at_three_keep_to_their_hours_and_rest() -> None:
+    found = retrieval(interests=["nightlife", "food", "culture"])
+    cards = {card.id: card for section in found.sections for card in section.items[:5]}
+    body = RoutingRequest.model_validate(
+        {
+            "places": [card.model_dump() for card in cards.values()],
+            "start": {"lat": 10.7725, "lon": 106.6980},
+            "start_at": "2026-11-21T09:00",  # Saturday and Sunday nights, into Monday
+            "end_at": "2026-11-23T03:00",
+            "day_start": "09:00",
+            "day_end": "03:00",
+        }
+    )
+
+    async def job(conn: AsyncConnection) -> tuple[RoutingResponse, DaysResponse]:
+        async with httpx.AsyncClient() as client:
+            settings = Settings(_env_file=None, routing_time_limit_seconds=3.0)
+            routed = await plan(reuse(conn), client, settings, body)
+            return routed, await plan_days(reuse(conn), client, settings, body)
+
+    result, days = run(job)
+    assert [day.capacity_minutes for day in days.days] == [18 * 60, 18 * 60]
+    placed = [stop.poi.id for day in result.days for stop in day.stops]
+    assert sorted(placed + [item.poi.id for item in result.unscheduled]) == sorted(cards)
+    assert len(result.days) == 2 and placed
+    for day in result.days:
+        opens = datetime.combine(day.date, time(9), TRIP_TZ)
+        previous = None
+        for stop in day.stops:  # 09:00 to 03:00 the next morning
+            assert opens <= stop.arrive <= stop.start < stop.leave <= opens + timedelta(hours=18)
+            assert previous is None or previous.leave <= stop.arrive
+            previous = stop
+    first, second = (day.stops for day in result.days)
+    if first and second:
+        assert (second[0].arrive - first[-1].leave) >= timedelta(hours=6)
+
+
+def test_every_place_value_names_a_stored_place() -> None:
+    async def job(conn: AsyncConnection) -> set[str]:
+        cur = await conn.execute(
+            "SELECT id FROM pois WHERE id = ANY(%s)", [list(VISIT_MINUTES.by_place)]
+        )
+        return {row[0] for row in await cur.fetchall()}
+
+    assert run(job) == set(VISIT_MINUTES.by_place)

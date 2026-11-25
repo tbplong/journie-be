@@ -1,9 +1,19 @@
-# Expected visit duration per POI category (taxonomy top.sub), in minutes: the typical (median)
-# visit to an ordinary place of that category. Basis, sources and the per-place / per-traveller
-# modifiers still to come: docs/visit-duration-basis.md (section 3). A category not listed uses
-# `default`.
-version: visit-minutes-v1
+# Expected visit length in minutes (app/services/routing/visits.py). For a place, in order:
+# its own value (`places`), the restaurant style (`restaurant_style`), its category (taxonomy
+# top.sub: the typical, median visit to an ordinary place of that category), then `default`.
+# Basis of the category values and the per-traveller modifiers still to come:
+# docs/visit-duration-basis.md (section 3).
+version: visit-minutes-v2
 default: 40
+# The longest visit, by top-level category (team decisions 2026-11-25: none of these places is
+# that big): a sight 1 h 30, anything else 2 h. Applied to every place; a traveller can still
+# lengthen a stop in the app.
+max_minutes:
+  default: 120
+  attraction: 90
+  culture_religion: 90
+  nature: 90
+  shopping: 90
 categories:
   food.restaurant: 60
   food.street_food: 30
@@ -14,8 +24,8 @@ categories:
   attraction.landmark: 45
   attraction.historic_site: 45
   attraction.viewpoint: 45
-  attraction.zoo: 120
-  attraction.theme_park: 180
+  attraction.zoo: 90
+  attraction.theme_park: 90
   culture_religion.church: 30
   culture_religion.pagoda: 40
   culture_religion.temple: 40
@@ -28,5 +38,55 @@ categories:
   shopping.department_store: 60
   entertainment.nightlife: 90
   entertainment.karaoke: 120
-  entertainment.cinema: 150
+  entertainment.cinema: 120
   entertainment.performing_arts: 120
+
+# Restaurants by style, as in docs/visit-duration-basis.md 2.3 (60 x 1.5, x 0.6, x 1.25; team
+# estimates, no Vietnamese measurements). A Michelin star first, then the first style whose words
+# appear as whole words in the name (or whose cuisine the place has). Words keep their Vietnamese
+# marks, so a name written without them keeps its category value.
+restaurant_style:
+  michelin_star: 90
+  quick:
+    minutes: 35
+    words: [phở, bún, bánh mì, cơm tấm, hủ tiếu, hủ tíu, bánh cuốn, xôi, bánh xèo, mì quảng,
+      cao lầu, bánh canh, cháo, bò kho, bột chiên, bánh căn, bánh khọt, bánh bèo, bánh ướt,
+      cơm gà, cơm hến, bánh tráng, mì, mỳ, miến, nem lụi, nem nướng, bò lá lốt]
+    cuisines: [noodle, ramen]
+  long:
+    minutes: 75
+    words: [lẩu, nướng, buffet, bbq, hotpot, hot pot, steak, steakhouse, omakase, fine dining]
+    cuisines: [barbecue, buffet, fine_dining, steakhouse, hotpot, grill, bar_and_grill]
+
+# Per place (pois.id), where an official source or independent travel sources state a visit
+# length (researched 2026-11-25; notes in journie-fe-main docs/specs/visit-durations.md). A show
+# is its length plus 15 minutes to be seated. Places not listed use the rules above.
+places:
+  lang-huong-thuy-xuan-856ca2: 70  # Làng hương Thủy Xuân; https://www.vietnamtourism.com/vi/lang-huong-hue-thuy-xuan-cach-tham-quan-nhung-gi-mong-oi
+  cung-an-dinh-61819c: 65  # Cung An Định; https://www.vietnamtourism.com/vi/cung-an-dinh-o-hue-lich-su-diem-tham-quan-va-cach-di-lai
+  phu-van-lau-b8e7fa: 30  # Phu Văn Lâu; https://localvietnam.com/hue/phu-van-lau/
+  hoang-thanh-thang-long-a81ce3: 90  # Hoàng thành Thăng Long; https://www.tripadvisor.com/6417854 (sources say 120; capped)
+  bao-tang-lich-su-quan-su-viet-nam-7906fc: 90  # Bảo tàng Lịch sử Quân sự Việt Nam; https://www.vietnamtourism.com/en/places/hanoi/vietnam-military-history-museum (sources say 150; capped)
+  bao-tang-dan-toc-hoc-viet-nam-68f9e4: 90  # Bảo tàng Dân tộc học Việt Nam; https://www.vietnamtourism.com/en/vietnam-museum-of-ethnology-in-hanoi-tickets-opening-hours-and-what-not-to-miss (sources say 150; capped)
+  bao-tang-phong-khong-khong-quan-699e48: 90  # Bảo tàng Phòng không - Không quân; https://mia.vn/cam-nang-du-lich/bao-tang-phong-khong-khong-quan-13307 (sources say 150; capped)
+  nha-hat-mua-roi-nuoc-thang-long-d2e83f: 65  # Nhà hát Múa rối nước Thăng Long; https://www.klook.com/activity/35653-thang-long-water-puppet-show-ticket-hanoi/
+  nha-hat-lon-ha-noi-d8749a: 70  # Nhà hát Lớn Hà Nội; https://www.vietnamtourism.com/en/hanoi-opera-house-tours-tickets-and-how-to-see-a-performance
+  binh-minh-jazz-club-b0317e: 120  # Binh Minh Jazz Club; https://minhjazzvietnam.com/contact-us/ (sources say 150; capped)
+  cho-dong-xuan-2194c2: 90  # Chợ Đồng Xuân; https://www.vietnamtourism.com/en/dong-xuan-market-in-hanoi-the-complete-guide-to-the-old-quarter-s-landmark-bazaar
+  bao-tang-my-thuat-viet-nam-16a585: 75  # Bảo tàng Mỹ thuật Việt Nam; https://localvietnam.com/hanoi/vietnam-fine-arts-museum-hanoi/
+  nha-co-87-ma-may-dcf39e: 30  # Nhà cổ 87 Mã Mây; https://www.vietnamtourism.com/en/places/hanoi/heritage-house-87-ma-may
+  lang-chu-tich-ho-chi-minh-59f123: 60  # Lăng Chủ tịch Hồ Chí Minh; https://www.vietnamtourism.com/en/ho-chi-minh-mausoleum-opening-hours-free-entry-and-the-dress-code
+  den-bach-ma-0aea5d: 25  # Đền Bạch Mã; https://www.vietnamtourism.com/en/places/hanoi/bach-ma-temple
+  bao-tang-phu-nu-viet-nam-e65341: 90  # Bảo tàng Phụ nữ Việt Nam; https://www.vietnamtourism.com/en/places/hanoi/vietnamese-womens-museum (sources say 105; capped)
+  cot-co-ha-noi-93d380: 35  # Cột cờ Hà Nội; https://vietnamtravel.com/hanoi-flag-tower
+  thao-cam-vien-sai-gon-zoo-botanical-gard-034c49: 90  # Thảo Cầm Viên - Sài gòn Zoo & Botanical Gardens; https://ca.trip.com/travel-guide/attraction/ho-chi-minh-city/saigon-zoo-and-botanical-garden-10521719 (sources say 180; capped)
+  the-golden-dragon-water-puppet-theater-c852b4: 65  # The Golden Dragon Water Puppet Theater; https://localvietnam.com/ho-chi-minh-city/water-puppet-show-in-ho-chi-minh-city/
+  dinh-doc-lap-97d379: 90  # Dinh Độc Lập; https://www.tripadvisor.com/--d317890.html
+  rap-xiec-va-bieu-dien-da-nang-phu-tho-8dc8dd: 85  # Rạp Xiếc và Biểu diễn đa năng Phú Thọ; https://www.sggp.org.vn/lan-dau-cong-dien-vo-xiec-roi-mo-show-hoanh-trang-dac-sac-post857148.html
+  bao-tang-fito-a44647: 60  # Bảo Tàng FITO; https://localvietnam.com/?p=27785
+  cho-ben-thanh-68e3af: 90  # Chợ Bến Thành; https://www.nomads-travel-guide.com/places/ben-thanh-market
+  bao-tang-chung-tich-chien-tranh-08b374: 90  # Bảo tàng Chứng tích Chiến tranh; https://www.nomadotravel.app/en/attractions/war-remnants-museum (sources say 120; capped)
+  bao-tang-my-thuat-thanh-pho-ho-chi-minh-73dd12: 75  # Bảo tàng Mỹ thuật Thành phố Hồ Chí Minh; https://www.vietnamairlines.com/en/useful-information/travel-guide/ho-chi-minh-city-museum-of-fine-arts
+  bao-tang-thanh-pho-ho-chi-minh-fdc347: 75  # Bảo tàng Thành phố Hồ Chí Minh; https://www.hoteldesartssaigon.com/?p=19657
+  cau-vang-golden-bridge-95390b: 90  # Cầu Vàng (Golden Bridge); https://hoiandaytrip.com/how-long-to-spend-at-golden-bridge-da-nang/ (sources say 360; capped)
+  cho-dem-helio-b8cf16: 90  # Chợ đêm Helio; https://www.nomadotravel.app/vi/attractions/helio-night-market

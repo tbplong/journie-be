@@ -1,16 +1,64 @@
 # Basic travel rules for POST /routing and /routing/days. All are soft: the planner breaks one
 # only when the traveller's places leave no other way, and then reports it in `warnings`.
 # Keys are taxonomy nodes: a top level (food) or a category (food.cafe).
-version: rules-v1
+version: rules-v5
 # At most this many places under the node on one day.
 day_max:
   food.cafe: 2
+  entertainment.nightlife: 1
+  # The widest pace value; the device keeps 1 on a slow day. Galleries are not counted here:
+  # the device caps museums and galleries together, the backend caps museums only.
+  attraction.museum: 2
+  # A varied day ("không 3 chùa một ngày"): pagodas, temples, shrines and churches at most this many
+  # (a city's "culture" places are mostly pagodas), and two markets or two parks. The widest pace
+  # value, like the museums: the device keeps 1 on a slow or balanced day, 2 on a fast one.
+  culture_religion: 2
+  shopping.market: 2
+  nature.park: 2
 # Counts under the node differ by at most 1 between days.
 day_spread:
   - food.restaurant
-# No two consecutive stops both under the node.
+  - attraction.museum             # museums only, galleries not counted
+  - culture_religion              # four pinned pagodas over two days go two and two, not three and one
+# No two consecutive stops both under the node. Never list a parent and its child. Each node is
+# its own tag: a museum next to a gallery is not a pair here.
 not_adjacent:
   - food
+  - attraction.museum
+  - attraction.gallery
+# A visit under the node starts no earlier than this time of the day (an evening out).
+not_before:
+  entertainment.nightlife: "18:00"
+# A meal under these nodes should start inside one of these hours: breakfast, lunch, dinner, in
+# this order. Each meal outside them counts as this many extra minutes of travel.
+meal_hours:
+  nodes: [food.restaurant, food.street_food, food.food_court]
+  windows: ["06:30-09:30", "11:00-14:00", "17:30-20:30"]
+  penalty_minutes: 20
+  # A second meal in a window already used that day counts as outside meal hours.
+  one_per_window: true
+  # A meal pinned to a day takes one window of that day for itself. `order` lists positions in
+  # `windows`: lunch first, then dinner, then breakfast.
+  slots:
+    nodes: [food.restaurant, food.street_food, food.food_court]
+    order: [1, 2, 0]
+# The evening begins with the dinner-window meal or an evening venue.
+evening:
+  free_from: "17:30"              # waiting for a visit that starts at or after this is free time
+  free_minutes: 180               # ...up to this long; twice this when a daytime visit follows lunch
+  after_penalty_minutes: 60       # a meal or daytime visit after the evening began counts as this
+# An outdoor sight should not start inside these hours. Parks and gardens are left out: they
+# count as a midday rest.
+avoid_hours:
+  nodes: [culture_religion, attraction.landmark, attraction.historic_site, attraction.viewpoint, attraction.zoo, attraction.theme_park, shopping.market]
+  windows: ["11:00-15:00"]
+  penalty_minutes: 20
+# Where the day's free time goes (POST /routing only; start times move, places and order do not).
+midday_rest:
+  from: "12:00"                   # the afternoon, on a day without a lunch
+  max_minutes: 180                # most free time moved from before the evening to after lunch
+  late_start: true                # the morning starts later when lunch would wait for its window
+  minutes_by_stops: [[4, 90], [6, 60], [99, 45]]   # rest after lunch on a day with no evening meal or venue
 # Days count as balanced while their busy share (visits + travel over the day's length) differs
-# by at most this much; within it, shorter travel decides.
+# by at most this much; within it, lost time decides.
 balance_tolerance: 0.15

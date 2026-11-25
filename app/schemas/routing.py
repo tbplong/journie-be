@@ -13,8 +13,18 @@ from app.schemas.retrieval import PoiCard
 MAX_PLACES = 50
 MAX_DAYS = 14  # one tour per day; a longer trip is planned in parts
 HHMM = r"^(?:[01]\d|2[0-3]):[0-5]\d$"
-TRIP_TZ = ZoneInfo("Asia/Ho_Chi_Minh")  # every place is in Ho Chi Minh City
+# A day_end at or before day_start ends the next day, at this hour at the latest. Every day
+# uses the same window, so a trip of several days keeps the 6 h left of 24 h for rest.
+LATEST_NEXT_DAY_END = "05:00"
+MAX_DAY_HOURS = 20  # any trip day
+MAX_DAY_HOURS_MULTI = 18  # the day window on a trip of more than one day
+TRIP_TZ = ZoneInfo("Asia/Ho_Chi_Minh")  # every place is in Vietnam
 TripDate = date  # a field named `date` with a default cannot use the bare `date` type
+
+
+def _minutes(hhmm: str) -> int:
+    hours, minutes = hhmm.split(":")
+    return int(hours) * 60 + int(minutes)
 
 
 class LatLon(BaseModel):
@@ -45,7 +55,12 @@ class RoutingRequest(BaseModel):
     )
     end_at: datetime = Field(description="Trip end, same rule as `start_at`.")
     day_start: str = Field(default="08:00", pattern=HHMM, description="Start of days 2..n.")
-    day_end: str = Field(default="21:00", pattern=HHMM, description="End of every day.")
+    day_end: str = Field(
+        default="21:00",
+        pattern=HHMM,
+        description="End of every day; at or before `day_start` it is the next day's, by "
+        f"{LATEST_NEXT_DAY_END} at the latest (09:00-03:00 is an 18 h day).",
+    )
     pins: list[Pin] = Field(
         default_factory=list,
         max_length=MAX_PLACES,
@@ -64,10 +79,22 @@ class RoutingRequest(BaseModel):
             raise ValueError("date is out of range in Asia/Ho_Chi_Minh time") from None
 
     @property
+    def overnight(self) -> bool:
+        """Every day ends the next day: `day_end` at or before `day_start`."""
+        return self.day_end <= self.day_start
+
+    @property
+    def day_close(self) -> time:
+        """Until this time after midnight it is still the day before: `day_end` when days end
+        the next day, else midnight itself."""
+        return time.fromisoformat(self.day_end) if self.overnight else time()
+
+    @property
     def last_day(self) -> date:
-        """The last trip day: an end at exactly midnight closes the day before."""
+        """The last trip day: an end after midnight and by `day_close` closes the day before
+        (exactly midnight, or 02:00 when days run until 03:00)."""
         last = self.end_at.date()
-        if self.end_at.time() == time() and last > self.start_at.date():
+        if self.end_at.time() <= self.day_close and last > self.start_at.date():
             return last - timedelta(days=1)
         return last
 
@@ -78,12 +105,30 @@ class RoutingRequest(BaseModel):
             raise ValueError("places contains the same id twice")
         if unknown := set(self.must_visit_ids) - set(ids):
             raise ValueError(f"must_visit_ids not in places: {sorted(unknown)}")
-        if self.day_end <= self.day_start:
-            raise ValueError("day_end must be after day_start")
+        if self.overnight and self.day_end > LATEST_NEXT_DAY_END:
+            raise ValueError(
+                "day_end at or before day_start ends the next day, so it must be "
+                f"{LATEST_NEXT_DAY_END} at the latest"
+            )
         if self.end_at <= self.start_at:
             raise ValueError("end_at must be after start_at")
-        if (self.last_day - self.start_at.date()).days >= MAX_DAYS:
+        days = (self.last_day - self.start_at.date()).days + 1
+        if days > MAX_DAYS:
             raise ValueError(f"the trip spans more than {MAX_DAYS} days")
+        end = _minutes(self.day_end) + (24 * 60 if self.overnight else 0)  # after day 1's midnight
+        if days > 1 and end - _minutes(self.day_start) > MAX_DAY_HOURS_MULTI * 60:
+            raise ValueError(
+                f"the day from day_start to day_end lasts more than {MAX_DAY_HOURS_MULTI} h; "
+                f"a trip of several days keeps {24 - MAX_DAY_HOURS_MULTI} h of rest between days"
+            )
+        midnight = self.start_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        first_end = timedelta(minutes=end)
+        if days == 1:
+            first_end = min(first_end, self.end_at - midnight)
+        if first_end - (self.start_at - midnight) > timedelta(hours=MAX_DAY_HOURS):
+            raise ValueError(
+                f"the first day, from start_at to day_end, lasts more than {MAX_DAY_HOURS} h"
+            )
         pinned = [pin.id for pin in self.pins]
         if len(pinned) != len(set(pinned)):
             raise ValueError("pins contains the same id twice")
@@ -144,8 +189,9 @@ WARNINGS = (
     "`travel_estimated`: some or all travel times are straight-line estimates (OSRM unset, "
     "unreachable or without a route); `hours_unknown:<id>`: no opening hours on record, "
     "assumed open all day; `day_max:<node>:<date>`, `day_spread:<node>`, "
-    "`not_adjacent:<node>:<date>`: a travel rule (config/rules.yaml) the places did not allow "
-    "keeping."
+    "`not_adjacent:<node>:<date>`, `not_before:<node>:<date>`: a travel rule (config/rules.yaml) "
+    "the places did not allow keeping (`not_before`: a visit under the node, e.g. a bar, starts "
+    "before its evening time)."
 )
 
 

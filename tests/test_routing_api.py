@@ -276,7 +276,8 @@ def test_route_returns_the_itinerary(client: TestClient, monkeypatch: pytest.Mon
     app.dependency_overrides[get_settings] = lambda: SETTINGS
     response = client.post("/routing", json=BODY)
     assert response.status_code == 200, response.text
-    assert response.json()["days"][0]["stops"][0]["poi"] == card("a")  # the card comes back as sent
+    sent = card("a") | {"visit_minutes": None}  # the optional field the request left out
+    assert response.json()["days"][0]["stops"][0]["poi"] == sent  # the card comes back as sent
 
 
 def test_missing_database_is_a_problem_response(client: TestClient) -> None:
@@ -292,7 +293,7 @@ def test_missing_database_is_a_problem_response(client: TestClient) -> None:
         ({"must_visit_ids": ["zzz"]}, "must_visit_ids not in places"),
         ({"end_at": "2026-11-20T08:00"}, "end_at must be after start_at"),
         ({"end_at": "2026-12-04T08:00"}, "more than 14 days"),
-        ({"day_start": "21:00"}, "day_end must be after day_start"),
+        ({"day_start": "21:00"}, "ends the next day, so it must be 05:00 at the latest"),
         ({"places": []}, "at least 1"),
         ({"places": [card(str(i)) for i in range(51)]}, "at most 50"),
     ],
