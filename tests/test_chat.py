@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.chat import get_gemini_client
 from app.core.config import Settings, get_settings
 from app.main import app
+from app.services import gemini
 from app.services.extraction.prompt import build_system_prompt
 from app.services.gemini import GeminiClient
 
@@ -200,18 +201,53 @@ def test_timeout_is_504(
     assert response.json()["type"] == "/problems/llm-timeout"
 
 
-@pytest.mark.parametrize("status_code", [400, 500, 503])
+@pytest.mark.parametrize(("status_code", "calls"), [(400, 1), (500, 2), (503, 2)])
 def test_upstream_http_error_is_502(
     client: TestClient,
     use_gemini: Callable[[Handler], list[httpx.Request]],
+    monkeypatch: pytest.MonkeyPatch,
     status_code: int,
+    calls: int,
 ) -> None:
-    use_gemini(lambda _: httpx.Response(status_code, json={"error": {"message": "boom"}}))
+    monkeypatch.setattr(gemini, "RETRY_DELAY_SECONDS", 0)
+    seen = use_gemini(lambda _: httpx.Response(status_code, json={"error": {"message": "boom"}}))
 
     response = client.post("/chat", json={"text": "Hue 2 ngày"})
 
     assert response.status_code == 502
     assert response.json()["detail"] == f"Gemini returned HTTP {status_code}"
+    # 500/502/503 are retried once; other errors are not.
+    assert len(seen) == calls
+
+
+def test_overloaded_gemini_is_retried_once(
+    client: TestClient,
+    use_gemini: Callable[[Handler], list[httpx.Request]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gemini, "RETRY_DELAY_SECONDS", 0)
+    answers = iter(
+        [httpx.Response(503), httpx.Response(200, json=gemini_payload(json.dumps(DA_LAT)))]
+    )
+    seen = use_gemini(lambda _: next(answers))
+
+    response = client.post("/chat", json={"text": "Đà Lạt 3 ngày, 3 triệu, thích cà phê"})
+
+    assert response.status_code == 200
+    assert len(seen) == 2
+
+
+def test_no_retry_without_time_left(
+    client: TestClient,
+    use_gemini: Callable[[Handler], list[httpx.Request]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The retry must fit in gemini_timeout_seconds (60 s by default).
+    monkeypatch.setattr(gemini, "RETRY_MIN_SECONDS", 61.0)
+    seen = use_gemini(lambda _: httpx.Response(503))
+
+    assert client.post("/chat", json={"text": "Hue 2 ngày"}).status_code == 502
+    assert len(seen) == 1
 
 
 def test_missing_api_key_is_503(client: TestClient) -> None:

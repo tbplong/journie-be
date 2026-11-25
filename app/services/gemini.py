@@ -4,12 +4,25 @@ The request shape matches the journie-data benchmark adapter: instructions go in
 ``systemInstruction``, the user text in ``contents``, and the schema in ``responseJsonSchema``.
 """
 
+import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings
+
+# Gemini's 500/502/503 ("internal", "model overloaded") usually clear within seconds: a
+# generation is retried once after RETRY_DELAY_SECONDS, when at least RETRY_MIN_SECONDS of
+# gemini_timeout_seconds are left, so both attempts together stay inside that budget.
+RETRY_STATUSES = frozenset({500, 502, 503})
+RETRY_DELAY_SECONDS = 1.5
+RETRY_MIN_SECONDS = 15.0
+# With a fallback model: the main model gets this share of the time budget (an overloaded model
+# can take 20+ s to answer 503), and the fallback is tried only with at least this much left.
+PRIMARY_SHARE = 0.5
+FALLBACK_MIN_SECONDS = 4.0
 
 
 class GeminiError(Exception):
@@ -52,9 +65,23 @@ class GeminiClient:
         return self._settings.gemini_model.removeprefix("models/")
 
     async def generate_json(
-        self, system_prompt: str, user_text: str, response_schema: dict[str, Any]
+        self,
+        system_prompt: str,
+        user_text: str,
+        response_schema: dict[str, Any],
+        temperature: float | None = None,
+        *,
+        timeout: float | None = None,
+        fallback_model: str | None = None,
     ) -> Generation:
         """Run one non-streaming generation constrained to ``response_schema``.
+
+        ``temperature`` overrides GEMINI_TEMPERATURE for this call (the benchmarked /chat
+        extraction keeps the setting). ``timeout`` replaces GEMINI_TIMEOUT_SECONDS as the budget.
+
+        Without ``fallback_model`` an HTTP 500, 502 or 503 is retried once (see RETRY_STATUSES).
+        With it, the main model gets PRIMARY_SHARE of the budget; when it is overloaded, times
+        out or cannot be reached, the fallback model gets the rest instead of a retry.
 
         Raises:
             GeminiTimeoutError: The request exceeded the configured timeout.
@@ -66,22 +93,40 @@ class GeminiClient:
             "systemInstruction": {"parts": [{"text": system_prompt}]},
             "contents": [{"role": "user", "parts": [{"text": user_text}]}],
             "generationConfig": {
-                "temperature": settings.gemini_temperature,
+                "temperature": settings.gemini_temperature if temperature is None else temperature,
                 "maxOutputTokens": settings.gemini_max_output_tokens,
                 "responseMimeType": "application/json",
                 "responseJsonSchema": response_schema,
             },
         }
-        url = f"{settings.gemini_base_url.rstrip('/')}/models/{self.model}:generateContent"
-        try:
-            response = await self._http.post(
-                url, headers=self._headers, json=body, timeout=settings.gemini_timeout_seconds
-            )
-        except httpx.TimeoutException as exc:
-            raise GeminiTimeoutError("Gemini request timed out") from exc
-        except httpx.RequestError as exc:
-            # The message omits the URL and headers so the API key never reaches logs.
-            raise GeminiUpstreamError(f"Gemini network error: {type(exc).__name__}") from exc
+        budget = settings.gemini_timeout_seconds if timeout is None else timeout
+        deadline = time.monotonic() + budget
+        if fallback_model:
+            fallback = fallback_model.removeprefix("models/")
+            try:
+                response = await self._post(self._url(self.model), body, budget * PRIMARY_SHARE)
+                if response.status_code not in RETRY_STATUSES:
+                    return self._result(response)
+            except (GeminiTimeoutError, GeminiUpstreamError):
+                pass
+            left = deadline - time.monotonic()
+            if left < FALLBACK_MIN_SECONDS:
+                raise GeminiTimeoutError("Gemini did not answer in time")
+            return self._result(await self._post(self._url(fallback), body, left))
+        url = self._url(self.model)
+        response = await self._post(url, body, budget)
+        if response.status_code in RETRY_STATUSES:
+            left = deadline - time.monotonic() - RETRY_DELAY_SECONDS
+            if left >= RETRY_MIN_SECONDS:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+                response = await self._post(url, body, left)
+        return self._result(response)
+
+    def _url(self, model: str) -> str:
+        return f"{self._settings.gemini_base_url.rstrip('/')}/models/{model}:generateContent"
+
+    @staticmethod
+    def _result(response: httpx.Response) -> Generation:
         if response.status_code == 429:
             raise GeminiRateLimitError(response.headers.get("retry-after"))
         if response.is_error:
@@ -90,6 +135,15 @@ class GeminiClient:
             return _parse_generation(response.json())
         except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
             raise GeminiUpstreamError("Gemini returned an unexpected payload") from exc
+
+    async def _post(self, url: str, body: dict[str, Any], timeout: float) -> httpx.Response:
+        try:
+            return await self._http.post(url, headers=self._headers, json=body, timeout=timeout)
+        except httpx.TimeoutException as exc:
+            raise GeminiTimeoutError("Gemini request timed out") from exc
+        except httpx.RequestError as exc:
+            # The message omits the URL and headers so the API key never reaches logs.
+            raise GeminiUpstreamError(f"Gemini network error: {type(exc).__name__}") from exc
 
 
 def _parse_generation(payload: dict[str, Any]) -> Generation:

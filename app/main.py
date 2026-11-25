@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.core.ratelimit import RateLimiter
 from app.services.retrieval.db import create_pool
 
 
@@ -16,7 +17,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # is never forwarded to another host.
     async with httpx.AsyncClient(follow_redirects=False) as client:
         app.state.http_client = client
-        pool = create_pool(get_settings())
+        settings = get_settings()
+        app.state.assistant_limiter = RateLimiter(
+            settings.assistant_client_rate_per_minute, settings.assistant_total_rate_per_minute
+        )
+        pool = create_pool(settings)
         app.state.db_pool = pool
         if pool is None:
             yield
