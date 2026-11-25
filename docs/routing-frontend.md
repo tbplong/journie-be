@@ -192,9 +192,16 @@ Hiển thị mỗi ngày như một timeline dọc từ trên xuống:
 
 1. Chặng đi: `leg` của stop đầu tiên là từ `start` (vị trí người dùng) tới nơi đầu. `mode` là
    `walk` (dưới 1 km) hoặc `ride`.
-2. Nơi tham quan: giờ `start` – `leave`, kèm `visit_minutes`.
-3. Nếu `wait_minutes` > 0: hiển thị "Đến lúc `arrive`, chờ mở cửa `wait_minutes` phút". Khoảng
-   này có thể dài, ví dụ nơi mở cửa lúc 09:00 mà người dùng xuất phát lúc 08:00.
+2. Nơi tham quan: giờ `start` – `leave`, kèm `visit_minutes`. Đây cũng là `visit_minutes` trên
+   `PoiCard` của retrieval, nên khi tự chọn điểm cho từng ngày, frontend dùng đúng số này.
+3. `wait_minutes` là khoảng giữa `arrive` và `start`. Đó là thời gian chờ mở cửa chỉ khi nơi
+   này còn đóng cửa lúc `arrive` (theo giờ mở cửa của nơi đó), ví dụ nơi mở cửa lúc 09:00 mà
+   người dùng đến lúc 08:04: hiển thị "Đến lúc `arrive`, chờ mở cửa `wait_minutes` phút". Nếu
+   nơi đã mở cửa lúc `arrive` thì đó là thời gian tự do server cố ý để lại: nghỉ sau bữa trưa
+   (tối đa 180 phút trước buổi tối; ngày không có bữa tối hay quán bar thì 90 / 60 / 45 phút
+   theo số điểm trong ngày), hoặc thời gian trước bữa tối hay quán bar. Gợi ý: "Nghỉ trưa X"
+   sau một bữa trong giờ trưa, "Thời gian tự do X trước buổi tối" trước bữa tối hoặc quán bar,
+   còn lại "Trống X". Đừng ghi khoảng này là chờ mở cửa.
 4. Lặp lại với stop kế tiếp: `leg` của nó là chặng từ nơi trước.
 5. Cuối ngày: `return_leg` là chặng về lại `start`. Ngày không có stop nào thì `stops` rỗng và
    `return_leg` là `null`: hiển thị "Ngày tự do".
@@ -232,16 +239,18 @@ dùng đã nói phải đi.
 |---|---|---|---|
 | `travel_estimated` | `travel_estimated` | Một phần thời gian di chuyển là ước lượng (không lấy được đường đi thật) | Một dòng chung: "Thời gian di chuyển là ước tính" |
 | `hours_unknown` | `hours_unknown:ho-con-rua-7621cd` | Nơi này không có giờ mở cửa, được coi là mở cả ngày | Biểu tượng nhỏ trên thẻ: "Chưa rõ giờ mở cửa, nên kiểm tra trước" |
-| `day_max` | `day_max:food.cafe:2026-11-21` | Ngày đó có nhiều hơn số cho phép (hiện là 2 quán cà phê) vì các nơi đã chọn không cho chia khác | Trên ngày đó: "Nhiều quán cà phê trong một ngày" |
-| `day_spread` | `day_spread:food.restaurant` | Số nhà hàng giữa các ngày chênh nhau hơn 1 | Một dòng chung: "Nhà hàng chưa chia đều giữa các ngày" |
-| `not_adjacent` | `not_adjacent:food:2026-11-21` | Ngày đó có hai nơi ăn uống liền nhau mà không tránh được | Trên ngày đó: "Có hai điểm ăn uống liền nhau" |
+| `day_max` | `day_max:food.cafe:2026-11-21`, `day_max:attraction.museum:2026-11-21` | Ngày đó có nhiều hơn số cho phép (2 quán cà phê, 1 nơi `entertainment.nightlife`, 2 bảo tàng, 1 nơi `culture_religion` (chùa, đền, nhà thờ), 2 chợ `shopping.market`, 2 công viên `nature.park`) vì các nơi đã chọn không cho chia khác. Backend chỉ đếm `attraction.museum`, không tính phòng trưng bày (`attraction.gallery`); thiết bị thì đếm chung cả hai | Trên ngày đó: "Nhiều quán cà phê trong một ngày" / "Nhiều quán bar trong một tối" / "Nhiều bảo tàng trong một ngày" / "Nhiều chùa, đền, nhà thờ trong ngày này" |
+| `not_before` | `not_before:entertainment.nightlife:2026-11-21` | Một quán bar phải xếp trước 18:00 vì không còn cách nào giữ đủ các nơi đã chọn | Trên ngày đó: "Quán bar được xếp trước buổi tối" |
+| `day_spread` | `day_spread:food.restaurant`, `day_spread:attraction.museum` | Số nhà hàng (hoặc bảo tàng `attraction.museum`, không tính phòng trưng bày) giữa các ngày chênh nhau hơn 1 | Một dòng chung: "Nhà hàng chưa chia đều giữa các ngày". Mã của bảo tàng có thể không hiển thị: thường do bảo tàng đóng cửa một ngày của trip, người dùng khó làm gì |
+| `not_adjacent` | `not_adjacent:food:2026-11-21`, `not_adjacent:attraction.museum:2026-11-21`, `not_adjacent:attraction.gallery:2026-11-21` | Ngày đó có hai nơi ăn uống (hoặc hai bảo tàng, hai phòng trưng bày) liền nhau mà không tránh được. Mỗi nhóm chỉ so với chính nó: một bảo tàng cạnh một phòng trưng bày thì backend không báo | Trên ngày đó: "Có hai điểm ăn uống liền nhau" / "Có hai bảo tàng liền nhau" |
 
 Cách đọc:
 
 - Tách bằng `split(":")`: phần đầu là mã, các phần sau là tham số theo bảng. Nhóm (`food.cafe`,
   `food`) và ngày (`YYYY-MM-DD`) không chứa dấu `:`.
 - Nhóm là mã taxonomy, không phải chữ để hiển thị. Frontend tự dịch: `food.cafe` → "quán cà
-  phê", `food.restaurant` → "nhà hàng", `food` → "ăn uống".
+  phê", `food.restaurant` → "nhà hàng", `food` → "ăn uống", `attraction.museum` → "bảo tàng",
+  `attraction.gallery` → "phòng trưng bày".
 - Gặp mã lạ thì bỏ qua, không báo lỗi: sau này có thể thêm luật mới.
 - Độ cân bằng giữa các ngày không có cảnh báo riêng; xem `busy_minutes` ở `/routing/days`.
 

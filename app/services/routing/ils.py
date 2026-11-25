@@ -24,6 +24,8 @@ from app.services.routing.validate import Tours, tour_errors
 
 MAX_NO_IMPROVE = 150  # paper's stopping rule, used here as the restart rule
 MIN_SHIFT = 1  # floored distances can make a detour 0 or negative; keep the ratio finite
+EXACT_MAX = 9  # exact_order's table doubles with each visit; longer days keep the local search's
+ORDER_STEPS = 60_000  # best_order's search per day: a few ms on a usual day, bounded on a long one
 
 Trace = list[tuple[float, int]]  # (seconds since start, best score) at each improvement
 
@@ -306,10 +308,124 @@ def rebalance(
     return [t.nodes for t in plan]
 
 
+def exact_order(inst: Instance, day: int, nodes: list[int]) -> list[int] | None:
+    """An order of these visits that fits the day, or None when no order does: dynamic
+    programming over (visited set, last visit), keeping the earliest finish per state, which is
+    exact because leaving earlier never closes a window."""
+    if not nodes:
+        return []
+    begin, end = inst.tours[day]
+    best: dict[tuple[int, int], tuple[int, int]] = {}  # (mask, last index) -> (leave, previous)
+
+    def extend(mask: int, k: int, here: int, moment: int, previous: int) -> None:
+        j = nodes[k]
+        slot = inst.nodes[j].start_at(moment + inst.travel[here][j])
+        if slot is None:
+            return
+        leave = slot[0] + inst.nodes[j].service
+        key = (mask | 1 << k, k)
+        if leave + inst.travel[j][0] <= end and (key not in best or leave < best[key][0]):
+            best[key] = (leave, previous)
+
+    size = len(nodes)
+    for k in range(size):
+        extend(0, k, 0, begin, -1)
+    for mask in range(1, 1 << size):
+        for last in range(size):
+            if (mask, last) in best:
+                for k in range(size):
+                    if not mask >> k & 1:
+                        extend(mask, k, nodes[last], best[mask, last][0], last)
+    full = (1 << size) - 1
+    ends = [k for k in range(size) if (full, k) in best]
+    if not ends:
+        return None
+    k = min(ends, key=lambda e: best[full, e][0] + inst.travel[nodes[e]][0])
+    order, mask = [], full
+    while k >= 0:
+        order.append(nodes[k])
+        k, mask = best[mask, k][1], mask ^ (1 << k)
+    return order[::-1]
+
+
+def best_order(
+    inst: Instance,
+    day: int,
+    nodes: list[int],
+    clash: Callable[[int, int], bool],
+    penalty: Callable[[int, int, int, bool, int], tuple[int, int]],
+) -> list[int] | None:
+    """The order of these visits with the fewest ``clash`` pairs, then the least lost time:
+    travel plus ``penalty(node, arrival, start, first visit, state) -> (lost, state)`` for each
+    visit, which counts its waiting and the soft rules; ``state`` starts at 0 and is carried
+    along the day. Lost time is never negative, so the bound holds. Branch and bound from the
+    given order. ``ORDER_STEPS`` is a count, so the same day always gets the same answer."""
+    begin, end = inst.tours[day]
+    best: tuple[tuple[int, int], list[int]] | None = None
+    steps = 0
+    order: list[int] = []
+
+    def walk(here: int, moment: int, clashes: int, lost: int, left: list[int], state: int) -> None:
+        nonlocal best, steps
+        if not left:
+            rank = (clashes, lost + inst.travel[here][0])
+            if best is None or rank < best[0]:
+                best = (rank, list(order))
+            return
+        for j in left:
+            steps += 1
+            if steps > ORDER_STEPS:
+                return
+            arrive = moment + inst.travel[here][j]
+            slot = inst.nodes[j].start_at(arrive)
+            if slot is None:
+                continue
+            leave = slot[0] + inst.nodes[j].service
+            if leave + inst.travel[j][0] > end:
+                continue
+            delta, after = penalty(j, arrive, slot[0], not order, state)
+            spent = lost + inst.travel[here][j] + delta
+            pairs = clashes + (bool(order) and clash(here, j))
+            if best is not None and (pairs, spent) >= best[0]:
+                continue
+            order.append(j)
+            walk(j, leave, pairs, spent, [n for n in left if n != j], after)
+            order.pop()
+
+    walk(0, begin, 0, 0, list(nodes), 0)
+    return best[1] if best else None
+
+
+def polish(
+    inst: Instance,
+    tours: Tours,
+    cost: Callable[[Tours], tuple],
+    deadline: float,
+    clash: Callable[[int, int], bool],
+    penalty: Callable[[int, int, int, bool, int], tuple[int, int]],
+) -> Tours:
+    """Put each day in its best order: moving one visit at a time can stop with a far place in
+    the wrong spot. A day changes only when the whole plan's ``cost`` drops."""
+    plan = [list(tour) for tour in tours]
+    best = cost(plan)
+    for day, tour in enumerate(plan):
+        if not 3 <= len(tour) <= EXACT_MAX or time.perf_counter() >= deadline:
+            continue
+        order = best_order(inst, day, tour, clash, penalty)
+        if order is None or order == tour:
+            continue
+        trial = [order if d == day else t for d, t in enumerate(plan)]
+        value = cost(trial)
+        if value < best:
+            best, plan = value, trial
+    return plan
+
+
 def fill(inst: Instance, tours: Tours, cost: Callable[[Tours], tuple], deadline: float) -> Tours:
     """Insert the nodes a feasible plan leaves out, highest score first, each at the feasible
     position (any tour) with the lowest ``cost``. After rebalancing, a day can have room the
-    insert step never saw: it only tries the cheapest position, conservatively."""
+    insert step never saw: it only tries the cheapest position, conservatively. A node that fits
+    no position may still fit once its day is put in another order."""
     plan = [list(tour) for tour in tours]
     visited = {j for tour in plan for j in tour}
     left = [j for j in inst.customers if j not in visited and inst.nodes[j].score > 0]
@@ -323,6 +439,17 @@ def fill(inst: Instance, tours: Tours, cost: Callable[[Tours], tuple], deadline:
                 if tour_errors(inst, trial, day):
                     continue
                 candidate = [trial if d == day else t for d, t in enumerate(plan)]
+                value = cost(candidate)
+                if best is None or value < best[0]:
+                    best = (value, candidate)
+        if best is None:
+            for day, tour in enumerate(plan):
+                if len(tour) >= EXACT_MAX or time.perf_counter() >= deadline:
+                    continue
+                order = exact_order(inst, day, [*tour, j])
+                if order is None:
+                    continue
+                candidate = [order if d == day else t for d, t in enumerate(plan)]
                 value = cost(candidate)
                 if best is None or value < best[0]:
                     best = (value, candidate)

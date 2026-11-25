@@ -83,7 +83,8 @@ async def retrieval(
     connect: Annotated[Connect, Depends(get_connection)],
     embed: Annotated[Embed | None, Depends(get_embedder)],
 ) -> RetrievalResponse:
-    """Find Ho Chi Minh City places for the `extraction` returned by POST /chat.
+    """Find places in the destination (Ho Chi Minh City, Hanoi, Da Nang, Hue) for the `extraction`
+    returned by POST /chat.
 
     Names are matched by trigram similarity, interests by kind, columns and full-text search.
     Free-text interests (no taxonomy or keyword match, no negation) are also searched by

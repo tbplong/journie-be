@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     gemini_api_key2: SecretStr | None = None
     gemini_embedding_model: str = "gemini-embedding-2"
     gemini_embedding_timeout_seconds: float = Field(default=5.0, gt=0)
+    # POST /assistant has no login and shares the Gemini key with /chat and /retrieval: requests
+    # per minute per client IP and for all clients together (per process); over it: 429.
+    assistant_client_rate_per_minute: int = Field(default=6, ge=1)
+    assistant_total_rate_per_minute: int = Field(default=20, ge=1)
+    # Someone is waiting on the chat: the whole answer gets this many seconds, and when the main
+    # model is overloaded (500/502/503), too slow or unreachable, the fallback model answers
+    # instead. Unset fallback: one model, the generic retry. /chat is not affected.
+    assistant_timeout_seconds: float = Field(default=20.0, gt=0)
+    assistant_fallback_model: str | None = "gemini-3.5-flash"
 
     # POI retrieval store (Azure Database for PostgreSQL). Unset: POST /retrieval returns 503.
     database_url: SecretStr | None = None

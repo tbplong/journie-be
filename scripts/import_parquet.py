@@ -2,11 +2,18 @@
 
     uv run --group data python scripts/import_parquet.py data/places_1000.parquet \
         --schema retrieval_test [--data-version 2026-10-28] [--prune] [--dry-run] \
-        [--taxonomy data/taxonomy.v1.yaml] [--no-strict-taxonomy] [--no-embed]
+        [--taxonomy data/taxonomy.v1.yaml] [--no-strict-taxonomy] [--no-embed] \
+        [--only description]
 
 Reads DATABASE_URL from the environment / .env. Creates the schema, the pg_trgm extension and
 the ``pois`` table (db/schema.sql) if missing. ``--prune`` deletes rows whose id is not in the
 file, so the table mirrors one dataset release.
+
+``--only description`` updates rows that already exist and nothing else: for each id of the file
+found in ``pois`` whose description differs, it sets ``description`` and the ``search_lex`` built
+from it, with the stored name, cuisine, features and michelin (seed names are not stored, so they
+come from the file). No insert, no DDL, no other column, and never with ``--prune``: manual
+database edits (prices, websites, cuisine) survive. With ``--dry-run`` it only prints the counts.
 
 Every row's ``taxonomy_version`` and ``category`` (after overrides) are checked against the
 taxonomy file. Problems are fatal; ``--no-strict-taxonomy`` prints them as warnings instead
@@ -22,6 +29,7 @@ import asyncio
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pyarrow.parquet as pq
@@ -46,9 +54,15 @@ TSVECTOR_COLUMNS = frozenset({"name_lex", "search_lex"})
 # Free tier: 100 embedding requests per minute per key, and each text of a batch counts as one.
 RATE_LIMIT_WAIT_S = 61
 RATE_LIMIT_ATTEMPTS = 5  # per batch; a daily quota stop ends the run (done batches are kept)
+# --only description: the stored columns search_lex is built from besides the description.
+SEARCH_INPUTS = ("name", "name_en", "cuisine", "features", "michelin")
+DESCRIPTION_UPDATE = (
+    "UPDATE pois SET description = %(description)s, search_lex = %(search_lex)s::tsvector "
+    "WHERE id = %(id)s"
+)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("parquet", type=Path)
     parser.add_argument("--schema", default=None, help="Target schema (default DATABASE_SCHEMA)")
@@ -63,7 +77,14 @@ def main() -> int:
         help="Fail on rows that break the taxonomy (default); --no-strict-taxonomy only warns",
     )
     parser.add_argument("--no-embed", action="store_true", help="Skip Gemini embeddings")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--only",
+        choices=["description"],
+        help="Update this column (and search_lex) of ids already in the table; no insert",
+    )
+    args = parser.parse_args(argv)
+    if args.only and args.prune:
+        parser.error("--only updates existing rows and cannot be combined with --prune")
 
     settings = Settings()
     schema = args.schema or settings.database_schema
@@ -92,10 +113,12 @@ def main() -> int:
         print(f"{'error' if args.strict_taxonomy else 'warning'}: {count} rows: {problem}")
     if issues and args.strict_taxonomy:
         return 1
-    if args.dry_run:
+    if args.dry_run and not args.only:
         return 0
     if settings.database_url is None:
         parser.error("DATABASE_URL is not set")
+    if args.only:
+        return update_only(args, raw_rows, overrides, version, schema, settings)
 
     columns = list(rows[0])
     upsert = sql.SQL(
@@ -134,6 +157,64 @@ def main() -> int:
         if not args.no_embed:
             embed_changed(conn, settings)
     return 0
+
+
+def update_only(
+    args: argparse.Namespace,
+    raw_rows: list[dict[str, Any]],
+    overrides: dict[str, dict[str, str]],
+    version: str,
+    schema: str,
+    settings: Settings,
+) -> int:
+    assert settings.database_url is not None
+    with connect(settings.database_url.get_secret_value()) as conn:
+        conn.read_only = args.dry_run
+        conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        found, updates = description_updates(conn, raw_rows, overrides, version)
+        print(
+            f"--only description: {found} of {len(raw_rows)} ids are in {schema}.pois, "
+            f"{len(updates)} descriptions differ"
+        )
+        if args.dry_run:
+            return 0
+        with conn.cursor() as cur:
+            cur.executemany(DESCRIPTION_UPDATE, updates)
+        conn.commit()
+        print(f"updated description and search_lex of {len(updates)} rows")
+        if not args.no_embed:
+            embed_changed(conn, settings)
+    return 0
+
+
+def description_updates(
+    conn: Connection,
+    raw_rows: list[dict[str, Any]],
+    overrides: dict[str, dict[str, str]],
+    version: str,
+) -> tuple[int, list[dict[str, Any]]]:
+    """(ids of the file already in pois, UPDATE parameters for those whose description differs).
+    search_lex is built from the stored search inputs so that only the description changes."""
+    query = sql.SQL("SELECT id, description, {} FROM pois WHERE id = ANY(%s)").format(
+        sql.SQL(", ").join(map(sql.Identifier, SEARCH_INPUTS))
+    )
+    stored = {
+        record[0]: record[1:]
+        for record in conn.execute(query, ([row["id"] for row in raw_rows],)).fetchall()
+    }
+    updates = []
+    for raw in raw_rows:
+        if raw["id"] not in stored or raw.get("description") == stored[raw["id"]][0]:
+            continue
+        row = prepare_row(
+            {**raw, **dict(zip(SEARCH_INPUTS, stored[raw["id"]][1:], strict=True))},
+            overrides,
+            version,
+        )
+        updates.append(
+            {"id": row["id"], "description": row["description"], "search_lex": row["search_lex"]}
+        )
+    return len(stored), updates
 
 
 def embed_changed(conn: Connection, settings: Settings) -> None:

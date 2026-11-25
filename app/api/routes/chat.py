@@ -8,9 +8,9 @@ from app.schemas.extraction import ExtractionRequest, ExtractionResponse
 from app.services.extraction.service import InvalidModelOutputError, extract_constraints
 from app.services.gemini import (
     GeminiClient,
+    GeminiError,
     GeminiRateLimitError,
     GeminiTimeoutError,
-    GeminiUpstreamError,
 )
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -28,6 +28,28 @@ def get_gemini_client(
         )
     return GeminiClient(
         request.app.state.http_client, settings, settings.gemini_api_key.get_secret_value()
+    )
+
+
+def gemini_problem(exc: GeminiError) -> ProblemError:
+    """The problem response for a failed Gemini call (shared by /chat and /assistant)."""
+    if isinstance(exc, GeminiTimeoutError):
+        return ProblemError(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            "llm-timeout",
+            "LLM timeout",
+            "The model did not respond in time. Retry later.",
+        )
+    if isinstance(exc, GeminiRateLimitError):
+        return ProblemError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "llm-rate-limited",
+            "LLM quota exceeded",
+            "The model provider's quota or rate limit was reached. Retry later.",
+            headers={"Retry-After": exc.retry_after or "30"},
+        )
+    return ProblemError(
+        status.HTTP_502_BAD_GATEWAY, "llm-upstream-error", "LLM provider error", str(exc)
     )
 
 
@@ -63,25 +85,5 @@ async def chat(
             f"The model did not return a valid extraction ({exc}, "
             f"finish_reason={exc.finish_reason}). Retrying may succeed.",
         ) from exc
-    except GeminiTimeoutError as exc:
-        raise ProblemError(
-            status.HTTP_504_GATEWAY_TIMEOUT,
-            "llm-timeout",
-            "LLM timeout",
-            "The model did not respond in time. Retry later.",
-        ) from exc
-    except GeminiRateLimitError as exc:
-        raise ProblemError(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "llm-rate-limited",
-            "LLM quota exceeded",
-            "The model provider's quota or rate limit was reached. Retry later.",
-            headers={"Retry-After": exc.retry_after or "30"},
-        ) from exc
-    except GeminiUpstreamError as exc:
-        raise ProblemError(
-            status.HTTP_502_BAD_GATEWAY,
-            "llm-upstream-error",
-            "LLM provider error",
-            str(exc),
-        ) from exc
+    except GeminiError as exc:
+        raise gemini_problem(exc) from exc

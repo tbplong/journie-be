@@ -21,19 +21,36 @@ groups:
     nodes: [nature.park]
   nature:
     label: Thiên nhiên
-    nodes: [nature]
+    nodes: [nature, attraction.zoo]
   shopping:
     label: Mua sắm
     nodes: [shopping]
   culture:
     label: Văn hoá
-    nodes: [culture_religion, attraction.landmark, attraction.historic_site, attraction.museum]
+    nodes: [culture_religion, attraction.landmark, attraction.historic_site, attraction.museum,
+      attraction.gallery]
   beach:
     label: Biển
     nodes: []
   nightlife:
     label: Bar & nightlife
     nodes: [entertainment.nightlife]
+  # No extraction value either: keyword_map routes "chùa", "đền", "nhà thờ"... here, so "không đi chùa"
+  # leaves out the pagodas and temples, not only places named "Chùa".
+  temple:
+    label: Đền chùa
+    nodes: [culture_religion.pagoda, culture_religion.temple, culture_religion.shrine]
+  church:
+    label: Nhà thờ
+    nodes: [culture_religion.church]
+  # No extraction value either: keyword_map routes "chợ", "chợ đêm", "night market"... here.
+  market:
+    label: Chợ
+    nodes: [shopping.market]
+  # No extraction value: keyword_map routes "múa rối nước", "nhà hát", "xem kịch"... here.
+  show:
+    label: Biểu diễn
+    nodes: [entertainment.performing_arts]
 # Nodes used above that are not in the taxonomy, with the reason (node: why). Only for a known
 # data issue; the integration tests fail when a gap no longer occurs in the data, and unit tests
 # fail when a gap is used but not listed here.

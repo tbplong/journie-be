@@ -22,10 +22,14 @@ from typing import Literal
 
 from psycopg import AsyncConnection
 
+from app.services.retrieval.poi import DEFAULT_CITY
 from app.services.retrieval.text import fold_case, has_diacritics, norm
 
-# Starting thresholds; tune with eval/run_eval.py.
-RESOLVE_MIN = 0.6
+# Starting thresholds; tune with eval/run_eval.py. RESOLVE_MIN is above 0.667, where two names
+# sharing their first words score ("Chùa Thiên Mụ" / "Chùa Thiên Minh"), and below real typos
+# ("cho ben tanh" scores 0.688).
+RESOLVE_MIN = 0.68
+TYPO_MIN = 0.6  # a lone hit this close still resolves when its name is one letter from the query
 RESOLVE_GAP = 0.15
 AMBIGUOUS_MIN = 0.35
 AMBIGUOUS_BAND = 0.15
@@ -40,6 +44,17 @@ class NameHit:
     similarity: float
     exact: bool
     exact_marked: bool = False  # accent-preserving key equals an accented query
+    typo: bool = False  # its closest key is one letter away from the query, accents aside
+
+
+def one_letter_apart(a: str, b: str) -> bool:
+    """At most one letter added, dropped or changed between two strings."""
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = next((k for k, (x, y) in enumerate(zip(a, b)) if x != y), len(a))
+    return a[i + (len(a) == len(b)) :] == b[i + 1 :]
 
 
 @dataclass(frozen=True)
@@ -62,7 +77,8 @@ def classify(query: str, hits: list[NameHit]) -> NameMatch:
         return NameMatch(query, "not_found", ())
     top = ranked[0].similarity
     runner_up = ranked[1].similarity if len(ranked) > 1 else 0.0
-    if top >= RESOLVE_MIN and top - runner_up >= RESOLVE_GAP:
+    close_enough = top >= RESOLVE_MIN or (top >= TYPO_MIN and ranked[0].typo)
+    if close_enough and top - runner_up >= RESOLVE_GAP:
         return NameMatch(query, "resolved", (ranked[0],))
     close = tuple(hit for hit in ranked if hit.similarity >= top - AMBIGUOUS_BAND)
     return NameMatch(query, "ambiguous", close)
@@ -80,8 +96,14 @@ MARKED_MATCH = f"%(marked)s AND {NAME_MATCH.format(keys='p.name_keys_vi', q='%(q
 # pre-filter with the index-backed `%` operator on a trigram index and score only the rows it
 # keeps.
 LOOKUP_SQL = f"""
-SELECT id, sim, exact, exact_marked FROM (
+SELECT id, sim, exact, exact_marked, closest FROM (
     SELECT p.id, p.name,
+           (
+               SELECT k
+               FROM unnest(CASE WHEN %(marked)s THEN p.name_keys_vi ELSE p.name_keys END) AS k
+               ORDER BY similarity(k, %(qs)s) DESC, k
+               LIMIT 1
+           ) AS closest,
            COALESCE((
                SELECT max(similarity(k, %(qs)s))
                FROM unnest(CASE WHEN %(marked)s THEN p.name_keys_vi ELSE p.name_keys END) AS k
@@ -89,7 +111,7 @@ SELECT id, sim, exact, exact_marked FROM (
            {FOLDED_MATCH} AS exact,
            {MARKED_MATCH} AS exact_marked
     FROM pois p
-    WHERE p.recommendable
+    WHERE p.recommendable AND p.city = %(city)s
 ) AS scored
 WHERE exact OR sim >= %(floor)s
 ORDER BY exact_marked DESC, exact DESC, sim DESC, length(name), id
@@ -109,15 +131,28 @@ def _key_params(query: str) -> dict[str, object]:
     }
 
 
-async def lookup(conn: AsyncConnection, query: str) -> NameMatch:
+async def lookup(conn: AsyncConnection, query: str, city: str = DEFAULT_CITY) -> NameMatch:
     params = _key_params(query)
     if not params["q"]:
         return NameMatch(query, "not_found", ())
     async with conn.cursor() as cur:
-        await cur.execute(LOOKUP_SQL, {**params, "floor": AMBIGUOUS_MIN, "limit": LOOKUP_LIMIT})
+        await cur.execute(
+            LOOKUP_SQL, {**params, "city": city, "floor": AMBIGUOUS_MIN, "limit": LOOKUP_LIMIT}
+        )
         rows = await cur.fetchall()
+    folded = norm(query)
     return classify(
-        query, [NameHit(row[0], float(row[1]), bool(row[2]), bool(row[3])) for row in rows]
+        query,
+        [
+            NameHit(
+                row[0],
+                float(row[1]),
+                bool(row[2]),
+                bool(row[3]),
+                one_letter_apart(folded, norm(row[4] or "")),
+            )
+            for row in rows
+        ],
     )
 
 
@@ -125,18 +160,18 @@ async def lookup(conn: AsyncConnection, query: str) -> NameMatch:
 EXACT_SQL = f"""
 SELECT p.id, {MARKED_MATCH} AS exact_marked
 FROM pois p
-WHERE {FOLDED_MATCH}
+WHERE p.city = %(city)s AND {FOLDED_MATCH}
 """
 
 
-async def exact_ids(conn: AsyncConnection, query: str) -> list[str]:
-    """Every place whose name matches the query (every branch of a chain), under the same
-    accent rule as ``classify``."""
+async def exact_ids(conn: AsyncConnection, query: str, city: str = DEFAULT_CITY) -> list[str]:
+    """Every place of the city whose name matches the query (every branch of a chain), under
+    the same accent rule as ``classify``."""
     params = _key_params(query)
     if not params["q"]:
         return []
     async with conn.cursor() as cur:
-        await cur.execute(EXACT_SQL, params)
+        await cur.execute(EXACT_SQL, {**params, "city": city})
         rows = await cur.fetchall()
     match = classify(query, [NameHit(row[0], 1.0, True, bool(row[1])) for row in rows])
     return [hit.poi_id for hit in match.hits]

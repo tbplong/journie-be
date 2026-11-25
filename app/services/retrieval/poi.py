@@ -5,6 +5,8 @@ from typing import Any
 
 from app.services.retrieval.hours import WeeklyHours
 
+DEFAULT_CITY = "Thành phố Hồ Chí Minh"  # the `city` value of the default destination's rows
+
 # Columns read by retrieval; candidates.py selects exactly these.
 POI_COLUMNS = (
     "id",

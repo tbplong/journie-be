@@ -22,7 +22,7 @@ from app.services.retrieval.config import INTEREST_MAP, KEYWORD_MAP
 from app.services.retrieval.db import Connect
 from app.services.retrieval.hours import TripWindow, check_hours, decide, trip_window
 from app.services.retrieval.interests import InterestRequest, plan_interests
-from app.services.retrieval.poi import Poi
+from app.services.retrieval.poi import DEFAULT_CITY, Poi
 from app.services.retrieval.sections import (
     ANY_TIME,
     Closeness,
@@ -30,22 +30,39 @@ from app.services.retrieval.sections import (
     Scored,
     SectionResult,
     assemble,
+    may_use_defaults,
     to_card,
 )
 
 RETRIEVAL_VERSION = "retrieval-v2"  # v2: semantic search for free-text interests
-SUPPORTED_DESTINATION = "Ho Chi Minh City"
+DEFAULT_DESTINATION = "Ho Chi Minh City"
+# A destination's standard name (extraction/name_aliases.csv) -> the `city` value of its rows.
+SUPPORTED_DESTINATIONS = {
+    DEFAULT_DESTINATION: DEFAULT_CITY,
+    "Hanoi": "Thành phố Hà Nội",
+    "Da Nang": "Thành phố Đà Nẵng",
+    "Hue": "Thành phố Huế",
+}
 
 
 def is_empty(extraction: Extraction) -> bool:
     """True for the all-null output extraction returns for instruction attacks."""
     scalars = (
-        "destination", "start_date", "end_date", "duration_days", "budget_vnd",
-        "available_start", "available_end",
+        "destination",
+        "start_date",
+        "end_date",
+        "duration_days",
+        "budget_vnd",
+        "available_start",
+        "available_end",
     )
     lists = (
-        "interests", "must_visit", "avoid", "preferred_places",
-        "hard_constraints", "soft_constraints",
+        "interests",
+        "must_visit",
+        "avoid",
+        "preferred_places",
+        "hard_constraints",
+        "soft_constraints",
     )
     return all(getattr(extraction, name) is None for name in scalars) and not any(
         getattr(extraction, name) for name in lists
@@ -117,28 +134,37 @@ async def _semantic(
     embed: semantic.Embed | None,
     hits: KeywordHits,
     warnings: list[str],
-) -> Closeness:
-    """Add semantic hits to the free-text requests' hits (a word match keeps its evidence) and
-    return how close each one is. One embedding call for the first MAX_QUERIES (cached); the
-    connection is borrowed only after the call returns.
+) -> tuple[Closeness, frozenset[str]]:
+    """Add semantic hits to the free-text requests' hits (a word match keeps its evidence).
+    Returns how close each one is, and the keys of the requests the MAX_QUERIES cap left to
+    word matching (warned about here, so sections does not call them not found). One embedding
+    call for the first MAX_QUERIES (cached); the connection is borrowed only after it returns.
 
-    A text that already names places ("phở", "bún chả") is not searched by meaning: embeddings
-    ignore the accent rule, so "phở" would find "Đông Phố"."""
+    A text that already names SEMANTIC_NAME_HITS places ("phở", "bánh mì") is not searched by
+    meaning: embeddings ignore the accent rule, so "phở" would find "Đông Phố"."""
     wanted = [
         req
         for req in requests
         if req.text is not None
         and not semantic.negated(req.raw)
-        and "name" not in hits[req.key].values()
-    ][: semantic.MAX_QUERIES]
+        and sum(e == "name" for e in hits[req.key].values()) < semantic.SEMANTIC_NAME_HITS
+    ]
     if not wanted or embed is None:
-        return {}
+        return {}, frozenset()
+    wanted, capped = wanted[: semantic.MAX_QUERIES], wanted[semantic.MAX_QUERIES :]
+    if capped:
+        listed = ", ".join(f"“{req.raw}”" for req in capped)
+        warnings.append(
+            f"Mỗi lần chỉ tìm theo ý nghĩa {semantic.MAX_QUERIES} sở thích tự do đầu tiên;"
+            f" {listed} chỉ được tìm theo từ"
+        )
+    unsearched = frozenset(req.key for req in capped)
     queries = {req.key: semantic.QUERY_FORMAT.format(req.raw) for req in wanted}
     try:
         vectors = await semantic.QUERY_CACHE.get_many(list(queries.values()), embed)
     except GeminiError:
         warnings.append("Tạm thời không tìm được theo ý nghĩa; sở thích tự do chỉ khớp theo từ")
-        return {}
+        return {}, unsearched
     closeness: Closeness = {}
     async with connect() as conn:
         for key, query in queries.items():
@@ -147,7 +173,7 @@ async def _semantic(
             for poi_id in found:
                 hits[key].setdefault(poi_id, "semantic")
             closeness[key] = semantic.closeness(found)
-    return closeness
+    return closeness, unsearched
 
 
 async def retrieve(
@@ -161,18 +187,30 @@ async def retrieve(
         return _bare("empty_extraction", started, [])
     # /retrieval may be called with a hand-written extraction: apply the /chat aliases too.
     destination = extraction.destination and standard_name("destination", extraction.destination)
-    if destination not in (None, SUPPORTED_DESTINATION):
+    # Null with several named destinations is a conflict for the traveller to settle, not "unknown".
+    named = {
+        standard_name("destination", atom.value)
+        for atom in extraction.hard_constraints
+        if atom.field == "destination" and atom.operator == "eq"
+    }
+    if destination is None and len(named) > 1:
+        listed = ", ".join(sorted(named))
+        return _bare(
+            "unsupported_destination", started, [f"Có nhiều điểm đến ({listed}): hãy chọn một"]
+        )
+    city = SUPPORTED_DESTINATIONS.get(DEFAULT_DESTINATION if destination is None else destination)
+    if city is None:
         return _bare(
             "unsupported_destination",
             started,
-            [f"Chưa hỗ trợ “{extraction.destination}”: hiện chỉ có dữ liệu TP.HCM"],
+            [f"Chưa hỗ trợ “{extraction.destination}”: hiện có TP.HCM, Hà Nội, Đà Nẵng và Huế"],
         )
     warnings: list[str] = []
     if extraction.destination is None:
         warnings.append("Chưa rõ điểm đến; đang gợi ý địa điểm tại TP.HCM")
 
     async with connect() as conn:
-        cuisines, data_version = await candidates.data_info(conn)
+        cuisines, data_version = await candidates.data_info(conn, city)
         plan = plan_interests(extraction, cuisines)
         window = trip_window(
             extraction.start_date,
@@ -194,10 +232,10 @@ async def retrieve(
         ambiguous: list[tuple[NameField, names.NameMatch]] = []
         not_found: list[NotFound] = []
         for field, query in dict.fromkeys(queries):
-            match = await names.lookup(conn, query)
+            match = await names.lookup(conn, query, city)
             if field == "avoid" and any(hit.exact for hit in match.hits):
                 # Every branch sharing the exact name is avoided, not just the lookup's top few.
-                avoid_ids.update(await names.exact_ids(conn, query))
+                avoid_ids.update(await names.exact_ids(conn, query, city))
             elif match.status == "resolved":
                 hit = match.hits[0]
                 if field == "must_visit":
@@ -216,25 +254,33 @@ async def retrieve(
                 " vẫn giữ trong danh sách bắt buộc"
             )
 
-        params = candidates.eligibility(plan.avoid, avoid_ids)
+        params = candidates.eligibility(plan.avoid, avoid_ids, city)
         hits = {
             req.key: await candidates.keyword_hits(conn, req, params)
             for req in plan.requests
             if req.group is None
         }
-    closeness = await _semantic(connect, plan.requests, params, embed, hits, warnings)
+    closeness, unsearched = await _semantic(connect, plan.requests, params, embed, hits, warnings)
     group_keys = [req.group for req in plan.requests if req.group]
-    if not any(req.source == "interest" or req.group or hits[req.key] for req in plan.requests):
-        group_keys = list(INTEREST_MAP.defaults)  # same rule as sections.build_specs
+    if may_use_defaults(plan.requests):
+        # sections.build_specs decides, on the places left to show, whether they are shown.
+        group_keys = list(INTEREST_MAP.defaults)
     nodes = {node for key in group_keys for node in INTEREST_MAP.groups[key].nodes}
     hit_ids = {poi_id for found in hits.values() for poi_id in found}
-    card_ids = [*pinned, *request.selected_ids, *(h.poi_id for _, m in ambiguous for h in m.hits)]
+    card_ids = [
+        *pinned,
+        *request.selected_ids,
+        *sorted(preferred),
+        *(h.poi_id for _, m in ambiguous for h in m.hits),
+    ]
     async with connect() as conn:
         pois = await candidates.fetch_pois(conn, nodes, hit_ids | preferred, params)
-        by_id = await candidates.fetch_by_ids(conn, list(dict.fromkeys(card_ids)))
+        by_id = await candidates.fetch_by_ids(conn, list(dict.fromkeys(card_ids)), city)
+    # A place the traveller names ("gần chợ Bến Thành" comes as a preferred place) anchors proximity
+    # like the places they must visit or already picked.
     anchors = [
         (poi.latitude, poi.longitude)
-        for poi_id in [*pinned, *request.selected_ids]
+        for poi_id in [*pinned, *sorted(preferred), *request.selected_ids]
         if (poi := by_id.get(poi_id)) and poi.latitude is not None and poi.longitude is not None
     ]
     results, section_warnings = assemble(
@@ -248,6 +294,7 @@ async def retrieve(
         anchors,
         request_seed(request),
         closeness,
+        unsearched,
     )
     if request.section is not None:
         results = [result for result in results if result.spec.key == request.section]
